@@ -4,19 +4,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum PathNamespace {
+    #[default]
     Native,
     Windows,
     Wsl { distro: Option<String> },
     Posix,
-}
-
-impl Default for PathNamespace {
-    fn default() -> Self {
-        PathNamespace::Native
-    }
 }
 
 /// Normalizes and converts paths according to AD-06 path namespace rules.
@@ -32,9 +27,8 @@ impl PathNormalizer {
             }
             PathNamespace::Windows => {
                 // Convert Windows backslashes to forward slashes, strip drive letters if needed or normalize
-                let cleaned = path_str.replace('\\', "/");
                 // e.g. C:/foo/bar -> /c/foo/bar or foo/bar
-                cleaned
+                path_str.replace('\\', "/")
             }
             PathNamespace::Wsl { distro: _ } => {
                 // WSL paths like /mnt/c/foo/bar or /home/user/foo
