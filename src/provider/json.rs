@@ -2,10 +2,11 @@
 
 use crate::engine::ByteEdit;
 use crate::protocol::{Cardinality, RefusalReason};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum JsonOperation {
     Set {

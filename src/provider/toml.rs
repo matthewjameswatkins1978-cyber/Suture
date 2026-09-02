@@ -2,11 +2,12 @@
 
 use crate::engine::ByteEdit;
 use crate::protocol::{Cardinality, RefusalReason};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use toml_edit::{DocumentMut, Item, Value};
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TomlOperation {
     Set {
@@ -27,7 +28,7 @@ pub enum TomlOperation {
     },
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum TomlValueWrapper {
     String(String),

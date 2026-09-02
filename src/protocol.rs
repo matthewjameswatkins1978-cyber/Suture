@@ -1,5 +1,29 @@
+use crate::path::PathNamespace;
+use crate::provider::json::JsonOperation;
+use crate::provider::text::TextOperation;
+use crate::provider::toml::TomlOperation;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OperationPayload {
+    Text(TextOperation),
+    Json(JsonOperation),
+    Toml(TomlOperation),
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct Request {
+    pub version: String,
+    pub file_path: String,
+    #[serde(default)]
+    pub namespace: PathNamespace,
+    pub expected_pre_hash: Option<String>,
+    #[serde(default)]
+    pub cardinality: Cardinality,
+    pub operation: OperationPayload,
+}
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
