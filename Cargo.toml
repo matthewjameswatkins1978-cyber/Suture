@@ -10,6 +10,7 @@ schemars = "0.8"
 thiserror = "1.0"
 sha2 = "0.10"
 similar = "2.6"
+jsonc-parser = "0.24"
 
 [dev-dependencies]
 tempfile = "3"
