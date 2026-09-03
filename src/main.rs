@@ -142,8 +142,12 @@ fn main() {
             }
 
             println!("- Providers Status:");
-            println!("  * Text Provider: READY (identify, replace, insert_before, insert_after, delete)");
-            println!("  * JSON Provider (serde_json / CST): READY (set, insert, delete, rename_key)");
+            println!(
+                "  * Text Provider: READY (identify, replace, insert_before, insert_after, delete)"
+            );
+            println!(
+                "  * JSON Provider (serde_json / CST): READY (set, insert, delete, rename_key)"
+            );
             println!("  * TOML Provider (toml_edit): READY (set, insert, delete, rename_key)");
             println!("- Status Summary: All systems operational and ready.");
         }

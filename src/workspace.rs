@@ -249,33 +249,33 @@ mod tests {
     #[test]
     fn test_resolve_path_traversal_rejection() {
         let tmp = TempDir::new().unwrap();
-        let ws = Workspace::new(tmp.path()).unwrap();
+        let _ws = Workspace::new(tmp.path()).unwrap();
 
-        let res1 = ws.resolve_path("../outside.txt");
+        let res1 = _ws.resolve_path("../outside.txt");
         assert!(matches!(res1, Err(WorkspaceError::Traversal(_))));
 
-        let res2 = ws.resolve_path("foo/../../outside.txt");
+        let res2 = _ws.resolve_path("foo/../../outside.txt");
         assert!(matches!(res2, Err(WorkspaceError::Traversal(_))));
 
-        let res3 = ws.resolve_path("/etc/passwd");
+        let res3 = _ws.resolve_path("/etc/passwd");
         assert!(matches!(res3, Err(WorkspaceError::Traversal(_))));
     }
 
     #[test]
     fn test_symlink_escape_rejection() {
         let tmp = TempDir::new().unwrap();
-        let ws = Workspace::new(tmp.path()).unwrap();
+        let _ws = Workspace::new(tmp.path()).unwrap();
 
         let outside_tmp = TempDir::new().unwrap();
         let outside_file = outside_tmp.path().join("secret.txt");
         fs::write(&outside_file, "secret").unwrap();
 
-        let symlink_path = tmp.path().join("evil_link");
+        let _symlink_path = tmp.path().join("evil_link");
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink(outside_tmp.path(), &symlink_path).unwrap();
+            std::os::unix::fs::symlink(outside_tmp.path(), &_symlink_path).unwrap();
 
-            let res = ws.resolve_path("evil_link/secret.txt");
+            let res = _ws.resolve_path("evil_link/secret.txt");
             assert!(matches!(res, Err(WorkspaceError::SymlinkEscape(_))));
         }
     }

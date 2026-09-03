@@ -10,7 +10,9 @@ pub enum PathNamespace {
     #[default]
     Native,
     Windows,
-    Wsl { distro: Option<String> },
+    Wsl {
+        distro: Option<String>,
+    },
     Posix,
 }
 
@@ -34,9 +36,7 @@ impl PathNormalizer {
                 // WSL paths like /mnt/c/foo/bar or /home/user/foo
                 path_str.replace('\\', "/")
             }
-            PathNamespace::Posix => {
-                path_str.replace('\\', "/")
-            }
+            PathNamespace::Posix => path_str.replace('\\', "/"),
         }
     }
 
@@ -46,7 +46,10 @@ impl PathNormalizer {
         match namespace {
             PathNamespace::Windows => {
                 // If path starts with something like /c/, convert to C:\
-                if normalized.len() >= 3 && normalized.chars().nth(0) == Some('/') && normalized.chars().nth(2) == Some('/') {
+                if normalized.len() >= 3
+                    && normalized.chars().nth(0) == Some('/')
+                    && normalized.chars().nth(2) == Some('/')
+                {
                     let drive = normalized.chars().nth(1).unwrap().to_ascii_uppercase();
                     let rest = &normalized[3..];
                     PathBuf::from(format!("{}:\\{}", drive, rest.replace('/', "\\")))
@@ -86,7 +89,9 @@ mod tests {
 
     #[test]
     fn test_path_namespace_serialization() {
-        let ns = PathNamespace::Wsl { distro: Some("Ubuntu".to_string()) };
+        let ns = PathNamespace::Wsl {
+            distro: Some("Ubuntu".to_string()),
+        };
         let json = serde_json::to_string(&ns).unwrap();
         assert!(json.contains("wsl"));
         assert!(json.contains("Ubuntu"));
