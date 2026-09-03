@@ -209,97 +209,11 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
             },
         );
     }
-    let provider_structural = match &request.operation {
-        OperationPayload::Json(_) | OperationPayload::Jsonc(_) => {
-            let result = if matches!(&request.operation, OperationPayload::Jsonc(_)) {
-                JsoncProvider::validate(&candidate)
-            } else {
-                JsonProvider::validate(&candidate)
-            };
-            if let Err(e) = result {
-                return failure(
-                    request,
-                    &file_path,
-                    provider,
-                    pre_hash,
-                    FailureReason::ProviderError {
-                        details: e.to_string(),
-                    },
-                );
-            }
-            StructuralValidation::Valid {
-                format: "strict_json".into(),
-            }
+    let provider_structural = match validate_candidate(request, &candidate) {
+        Ok(validation) => validation,
+        Err(reason) => {
+            return failure(request, &file_path, provider, pre_hash, reason);
         }
-        OperationPayload::Toml(_) => {
-            let valid = std::str::from_utf8(&candidate)
-                .ok()
-                .and_then(|s| s.parse::<toml_edit::DocumentMut>().ok())
-                .is_some();
-            if !valid {
-                return failure(
-                    request,
-                    &file_path,
-                    provider,
-                    pre_hash,
-                    FailureReason::ProviderError {
-                        details: "candidate TOML failed validation".into(),
-                    },
-                );
-            }
-            StructuralValidation::Valid {
-                format: "toml".into(),
-            }
-        }
-        OperationPayload::Text(_) | OperationPayload::Pattern(_) => {
-            StructuralValidation::NotApplicable
-        }
-        OperationPayload::Markdown(_) => StructuralValidation::Valid {
-            format: "markdown_regions".into(),
-        },
-        OperationPayload::Yaml(_) => {
-            if let Err(e) = yaml::validate(&candidate) {
-                return failure(
-                    request,
-                    &file_path,
-                    provider,
-                    pre_hash,
-                    FailureReason::ProviderError {
-                        details: e.to_string(),
-                    },
-                );
-            }
-            StructuralValidation::Valid {
-                format: "yaml_conservative_source".into(),
-            }
-        }
-        OperationPayload::File(_) => StructuralValidation::NotApplicable,
-        OperationPayload::Code(operation) => {
-            let language = match operation {
-                CodeOperation::ReplaceNode { language, .. }
-                | CodeOperation::InsertBeforeNode { language, .. }
-                | CodeOperation::InsertAfterNode { language, .. }
-                | CodeOperation::RemoveNode { language, .. } => language,
-            };
-            if let Err(e) = code::validate(&candidate, language) {
-                return failure(
-                    request,
-                    &file_path,
-                    provider,
-                    pre_hash,
-                    FailureReason::ProviderError {
-                        details: e.to_string(),
-                    },
-                );
-            }
-            StructuralValidation::Valid {
-                format: format!("tree_sitter:{language}"),
-            }
-        }
-        OperationPayload::Dotenv(_) => StructuralValidation::Valid {
-            format: "dotenv_lines".into(),
-        },
-        OperationPayload::Patch(_) => StructuralValidation::NotApplicable,
     };
     if candidate == original {
         return completed(
@@ -636,7 +550,75 @@ pub fn execute_transaction(
             }
         }
     }
-    let _ = recovery::remove_journal(workspace, &transaction.transaction_id);
+    for entry in &journal.entries {
+        let landed = match workspace.read_file(&entry.path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let mut rollback_ok = true;
+                for prior in committed.iter().rev() {
+                    if workspace
+                        .write_file_atomic_checked(
+                            &prior.path,
+                            &prior.candidate_hash,
+                            &prior.original,
+                        )
+                        .is_err()
+                    {
+                        rollback_ok = false;
+                    }
+                }
+                return TransactionCertificate {
+                    protocol_version: transaction.version.clone(),
+                    transaction_id: transaction.transaction_id.clone(),
+                    outcome: Outcome::Failed,
+                    certificates,
+                    rollback_state: if rollback_ok {
+                        "rolled_back".into()
+                    } else {
+                        "manual_recovery_required".into()
+                    },
+                    transaction_guarantee: "transactional_with_rollback".into(),
+                    refusal_reason: None,
+                    failure_reason: Some(FailureReason::PostCommitVerificationFailure {
+                        expected_hash: entry.candidate_hash.clone(),
+                        actual_hash: format!("read failed: {error}"),
+                    }),
+                    reason_code: Some("POST_COMMIT_VERIFICATION_FAILED".into()),
+                };
+            }
+        };
+        let actual_hash = compute_sha256(&landed);
+        if landed != entry.candidate {
+            let mut rollback_ok = true;
+            for prior in committed.iter().rev() {
+                if workspace
+                    .write_file_atomic_checked(&prior.path, &prior.candidate_hash, &prior.original)
+                    .is_err()
+                {
+                    rollback_ok = false;
+                }
+            }
+            return TransactionCertificate {
+                protocol_version: transaction.version.clone(),
+                transaction_id: transaction.transaction_id.clone(),
+                outcome: Outcome::Failed,
+                certificates,
+                rollback_state: if rollback_ok {
+                    "rolled_back".into()
+                } else {
+                    "manual_recovery_required".into()
+                },
+                transaction_guarantee: "transactional_with_rollback".into(),
+                refusal_reason: None,
+                failure_reason: Some(FailureReason::PostCommitVerificationFailure {
+                    expected_hash: entry.candidate_hash.clone(),
+                    actual_hash,
+                }),
+                reason_code: Some("POST_COMMIT_VERIFICATION_FAILED".into()),
+            };
+        }
+    }
+    let cleanup = recovery::remove_journal(workspace, &transaction.transaction_id);
     TransactionCertificate {
         protocol_version: transaction.version.clone(),
         transaction_id: transaction.transaction_id.clone(),
@@ -646,10 +628,16 @@ pub fn execute_transaction(
             Outcome::Applied
         },
         certificates,
-        rollback_state: "not_required".into(),
+        rollback_state: if cleanup.is_ok() {
+            "not_required".into()
+        } else {
+            "recovery_available".into()
+        },
         transaction_guarantee: "transactional_with_rollback".into(),
         refusal_reason: None,
-        failure_reason: None,
+        failure_reason: cleanup.err().map(|error| FailureReason::CommitFailure {
+            message: format!("recovery journal cleanup failed: {error}"),
+        }),
         reason_code: None,
     }
 }
@@ -691,6 +679,29 @@ fn execute_single_file_transaction(
     let mut certificates = Vec::new();
     let mut aggregate = zero_effect();
     for request in &transaction.requests {
+        if request.version != PROTOCOL_VERSION {
+            return transaction_refusal(
+                transaction,
+                RefusalReason::UnsupportedProtocolVersion {
+                    requested: request.version.clone(),
+                    supported: PROTOCOL_VERSION.into(),
+                },
+            );
+        }
+        if !request.budget.allowed_path_prefixes.is_empty()
+            && !request
+                .budget
+                .allowed_path_prefixes
+                .iter()
+                .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
+        {
+            return transaction_refusal(
+                transaction,
+                RefusalReason::WorkspaceTraversal {
+                    path: "path is outside requested budget scope".into(),
+                },
+            );
+        }
         if let Some(expected) = request
             .expected_pre_hash
             .as_deref()
@@ -703,6 +714,45 @@ fn execute_single_file_transaction(
                     transaction,
                     RefusalReason::StaleIdentity {
                         expected_hash: expected,
+                        actual_hash: actual,
+                    },
+                );
+            }
+        }
+        if let Some(reason) = unsupported_encoding(&current) {
+            return transaction_refusal(transaction, reason);
+        }
+        if current.contains(&0) {
+            return transaction_refusal(transaction, RefusalReason::BinaryInput);
+        }
+        if is_generated_file(&current) && !request.allow_generated {
+            return transaction_refusal(
+                transaction,
+                RefusalReason::GeneratedFileRequiresOptIn {
+                    marker: generated_marker(&current).into(),
+                },
+            );
+        }
+        if let Some(guard) = &request.region_guard {
+            let matches: Vec<_> = current
+                .windows(guard.anchor.len())
+                .filter(|bytes| *bytes == guard.anchor.as_bytes())
+                .collect();
+            if matches.len() != 1 {
+                return transaction_refusal(
+                    transaction,
+                    RefusalReason::CardinalityMismatch {
+                        expected: "one durable region anchor".into(),
+                        actual: matches.len(),
+                    },
+                );
+            }
+            let actual = compute_sha256(guard.anchor.as_bytes());
+            if actual != normalize_hash(&guard.target_sha256) {
+                return transaction_refusal(
+                    transaction,
+                    RefusalReason::StaleIdentity {
+                        expected_hash: normalize_hash(&guard.target_sha256),
                         actual_hash: actual,
                     },
                 );
@@ -724,7 +774,21 @@ fn execute_single_file_transaction(
                 )
             }
         };
+        let structural = match validate_candidate(request, &candidate) {
+            Ok(validation) => validation,
+            Err(reason) => return transaction_failure(transaction, reason),
+        };
         let effect = effect_usage(&current, &candidate, &edits, &request.budget);
+        if let Some((dimension, limit, actual)) = budget_violation(&effect, &request.budget) {
+            return transaction_refusal(
+                transaction,
+                RefusalReason::EffectBudgetExceeded {
+                    dimension,
+                    limit,
+                    actual,
+                },
+            );
+        }
         aggregate.matches += effect.matches;
         aggregate.changed_regions += effect.changed_regions;
         aggregate.changed_lines += effect.changed_lines;
@@ -741,7 +805,7 @@ fn execute_single_file_transaction(
                 Outcome::Applied
             },
             changed_ranges(&edits),
-            StructuralValidation::NotApplicable,
+            structural,
             PreservationFacts::from_bytes(&current, &candidate),
             CommitGuarantee {
                 mode: "dry_run".into(),
@@ -822,16 +886,58 @@ fn execute_single_file_transaction(
         &journal.entries[0].candidate,
     ) {
         Ok(()) => {
-            let _ = recovery::remove_journal(workspace, &transaction.transaction_id);
+            let landed = match workspace.read_file(&path) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return TransactionCertificate {
+                        protocol_version: transaction.version.clone(),
+                        transaction_id: transaction.transaction_id.clone(),
+                        outcome: Outcome::Failed,
+                        certificates,
+                        rollback_state: "recovery_available".into(),
+                        transaction_guarantee: "transactional_with_rollback".into(),
+                        refusal_reason: None,
+                        failure_reason: Some(FailureReason::PostCommitVerificationFailure {
+                            expected_hash: journal.entries[0].candidate_hash.clone(),
+                            actual_hash: format!("read failed: {error}"),
+                        }),
+                        reason_code: Some("POST_COMMIT_VERIFICATION_FAILED".into()),
+                    };
+                }
+            };
+            let actual_hash = compute_sha256(&landed);
+            if landed != journal.entries[0].candidate {
+                return TransactionCertificate {
+                    protocol_version: transaction.version.clone(),
+                    transaction_id: transaction.transaction_id.clone(),
+                    outcome: Outcome::Failed,
+                    certificates,
+                    rollback_state: "recovery_available".into(),
+                    transaction_guarantee: "transactional_with_rollback".into(),
+                    refusal_reason: None,
+                    failure_reason: Some(FailureReason::PostCommitVerificationFailure {
+                        expected_hash: journal.entries[0].candidate_hash.clone(),
+                        actual_hash,
+                    }),
+                    reason_code: Some("POST_COMMIT_VERIFICATION_FAILED".into()),
+                };
+            }
+            let cleanup = recovery::remove_journal(workspace, &transaction.transaction_id);
             TransactionCertificate {
                 protocol_version: transaction.version.clone(),
                 transaction_id: transaction.transaction_id.clone(),
                 outcome: Outcome::Applied,
                 certificates,
-                rollback_state: "not_required".into(),
+                rollback_state: if cleanup.is_ok() {
+                    "not_required".into()
+                } else {
+                    "recovery_available".into()
+                },
                 transaction_guarantee: "transactional_with_rollback".into(),
                 refusal_reason: None,
-                failure_reason: None,
+                failure_reason: cleanup.err().map(|error| FailureReason::CommitFailure {
+                    message: format!("recovery journal cleanup failed: {error}"),
+                }),
                 reason_code: None,
             }
         }
@@ -1000,6 +1106,77 @@ fn plan_edits(
                 PatchError::Refused(r) => (r, detail),
             }
         }),
+    }
+}
+
+fn validate_candidate(
+    request: &Request,
+    candidate: &[u8],
+) -> Result<StructuralValidation, FailureReason> {
+    match &request.operation {
+        OperationPayload::Json(_) => {
+            JsonProvider::validate(candidate).map_err(|error| FailureReason::ProviderError {
+                details: error.to_string(),
+            })?;
+            Ok(StructuralValidation::Valid {
+                format: "strict_json".into(),
+            })
+        }
+        OperationPayload::Jsonc(_) => {
+            JsoncProvider::validate(candidate).map_err(|error| FailureReason::ProviderError {
+                details: error.to_string(),
+            })?;
+            Ok(StructuralValidation::Valid {
+                format: "strict_json".into(),
+            })
+        }
+        OperationPayload::Toml(_) => {
+            let valid = std::str::from_utf8(candidate)
+                .ok()
+                .and_then(|source| source.parse::<toml_edit::DocumentMut>().ok())
+                .is_some();
+            if !valid {
+                return Err(FailureReason::ProviderError {
+                    details: "candidate TOML failed validation".into(),
+                });
+            }
+            Ok(StructuralValidation::Valid {
+                format: "toml".into(),
+            })
+        }
+        OperationPayload::Text(_) | OperationPayload::Pattern(_) => {
+            Ok(StructuralValidation::NotApplicable)
+        }
+        OperationPayload::Markdown(_) => Ok(StructuralValidation::Valid {
+            format: "markdown_regions".into(),
+        }),
+        OperationPayload::Yaml(_) => {
+            yaml::validate(candidate).map_err(|error| FailureReason::ProviderError {
+                details: error.to_string(),
+            })?;
+            Ok(StructuralValidation::Valid {
+                format: "yaml_conservative_source".into(),
+            })
+        }
+        OperationPayload::File(_) => Ok(StructuralValidation::NotApplicable),
+        OperationPayload::Code(operation) => {
+            let language = match operation {
+                CodeOperation::ReplaceNode { language, .. }
+                | CodeOperation::InsertBeforeNode { language, .. }
+                | CodeOperation::InsertAfterNode { language, .. }
+                | CodeOperation::RemoveNode { language, .. } => language,
+            };
+            code::validate(candidate, language).map_err(|error| FailureReason::ProviderError {
+                details: error.to_string(),
+            })?;
+            Ok(StructuralValidation::Valid {
+                format: format!("tree_sitter:{language}"),
+            })
+        }
+        OperationPayload::Dotenv(_) => Ok(StructuralValidation::Valid {
+            format: "dotenv_lines".into(),
+        }),
+        OperationPayload::Patch(_) => Ok(StructuralValidation::NotApplicable),
     }
 }
 
