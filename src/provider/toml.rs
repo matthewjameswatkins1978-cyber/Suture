@@ -8,7 +8,7 @@ use thiserror::Error;
 use toml_edit::{DocumentMut, Item, Value};
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TomlOperation {
     Set {
         path: String,
@@ -91,8 +91,16 @@ impl TomlProvider {
     pub fn plan(
         content: &[u8],
         op: &TomlOperation,
-        _cardinality: &Cardinality,
+        cardinality: &Cardinality,
     ) -> Result<Vec<ByteEdit>, TomlProviderError> {
+        if !matches!(cardinality, Cardinality::ExactlyOne) {
+            return Err(TomlProviderError::Refused(
+                RefusalReason::CardinalityMismatch {
+                    expected: "exactly_one (structured paths are unique)".into(),
+                    actual: 1,
+                },
+            ));
+        }
         let content_str = std::str::from_utf8(content).map_err(|e| {
             TomlProviderError::Refused(RefusalReason::MalformedInput {
                 details: format!("Invalid UTF-8 in TOML file: {}", e),
@@ -125,13 +133,43 @@ impl TomlProvider {
         if final_bytes == content {
             return Ok(Vec::new());
         }
-
+        if has_changed_encoding_or_newline(content, &final_bytes) {
+            return Err(TomlProviderError::Refused(
+                RefusalReason::PreservationUnavailable {
+                    details: "toml_edit changed BOM, line endings, or final-newline state".into(),
+                },
+            ));
+        }
+        let (start, end, replacement) = narrow_diff(content, &final_bytes);
         Ok(vec![ByteEdit {
-            start: 0,
-            end: content.len(),
-            replacement: final_bytes,
+            start,
+            end,
+            replacement,
         }])
     }
+}
+
+fn has_changed_encoding_or_newline(original: &[u8], modified: &[u8]) -> bool {
+    original.starts_with(&[0xef, 0xbb, 0xbf]) != modified.starts_with(&[0xef, 0xbb, 0xbf])
+        || original.ends_with(b"\n") != modified.ends_with(b"\n")
+        || (original.contains(&b'\r') != modified.contains(&b'\r'))
+}
+
+fn narrow_diff(original: &[u8], modified: &[u8]) -> (usize, usize, Vec<u8>) {
+    let prefix = original
+        .iter()
+        .zip(modified)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = original[prefix..]
+        .iter()
+        .rev()
+        .zip(modified[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let end = original.len().saturating_sub(suffix);
+    let modified_end = modified.len().saturating_sub(suffix);
+    (prefix, end, modified[prefix..modified_end].to_vec())
 }
 
 fn apply_toml_operation(

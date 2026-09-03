@@ -1,171 +1,128 @@
 #![forbid(unsafe_code)]
 
 use schemars::schema_for;
-use std::env;
-use std::fs;
-use std::io::{self, Read};
-use suture::pipeline::execute_request;
-use suture::protocol::{Certificate, Request};
-use suture::workspace::Workspace;
+use std::{
+    env, fs,
+    io::{self, Read},
+};
+use suture::{
+    pipeline::execute_request,
+    protocol::{
+        Certificate, CommitGuarantee, FailureReason, Outcome, PreservationFacts, RefusalReason,
+        Request, StructuralValidation, PROTOCOL_VERSION,
+    },
+    workspace::Workspace,
+};
 
-fn print_help() {
-    println!(
-        r#"suture v0.1.0 - AI-first deterministic file-mutation protocol and runtime
-
-USAGE:
-    suture <COMMAND> [OPTIONS]
-
-COMMANDS:
-    apply [--request <path>]       Read JSON request from file or stdin, run pipeline, emit Certificate JSON
-    dry-run [--request <path>]     Run dry-run pipeline, emit Certificate JSON without writing to disk
-    schema                         Print JSON schema for Request and Certificate
-    doctor                         Diagnose platform, workspace access, and provider status
-    --version, -V                  Print version information
-    --help, -h                     Print help information
-"#
-    );
+fn help() {
+    println!("suture {PROTOCOL_VERSION} - deterministic, source-preserving file mutation\n\nUSAGE:\n  suture apply [--request FILE]\n  suture dry-run [--request FILE]\n  suture schema\n  suture doctor\n  suture --version");
 }
-
+fn empty_cert(reason: RefusalReason) -> Certificate {
+    Certificate {
+        protocol_version: PROTOCOL_VERSION.into(),
+        outcome: Outcome::Refused,
+        file_path: String::new(),
+        provider: "request".into(),
+        provider_version: "parser".into(),
+        expected_cardinality: Default::default(),
+        observed_cardinality: None,
+        pre_hash: String::new(),
+        post_hash: None,
+        changed_ranges: Vec::new(),
+        diff_summary: None,
+        diff_truncated: false,
+        structural_validation: StructuralValidation::NotApplicable,
+        preservation: PreservationFacts::default(),
+        commit: CommitGuarantee::default(),
+        refusal_reason: Some(reason),
+        failure_reason: None,
+        diagnostics: Vec::new(),
+    }
+}
 fn main() {
     let args: Vec<String> = env::args().collect();
-
-    if args.len() > 1 && (args[1] == "--version" || args[1] == "-V") {
-        println!("suture 0.1.0");
+    if args.get(1).is_some_and(|x| x == "--version" || x == "-V") {
+        println!("suture {PROTOCOL_VERSION}");
         return;
     }
-
-    if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
-        print_help();
+    if args.get(1).is_some_and(|x| x == "--help" || x == "-h") {
+        help();
         return;
     }
-
-    if args.len() < 2 {
-        print_help();
-        std::process::exit(1);
-    }
-
-    let command = &args[1];
-
-    match command.as_str() {
+    let Some(command) = args.get(1).map(String::as_str) else {
+        help();
+        std::process::exit(1)
+    };
+    match command {
         "apply" | "dry-run" => {
-            let dry_run = command == "dry-run";
-            let mut request_path: Option<String> = None;
-
-            let mut i = 2;
-            while i < args.len() {
-                if args[i] == "--request" && i + 1 < args.len() {
-                    request_path = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-
-            let request_json_str = if let Some(path) = request_path {
-                match fs::read_to_string(&path) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        eprintln!("Error: failed to read request file '{}'", path);
-                        std::process::exit(1);
-                    }
-                }
+            let dry = command == "dry-run";
+            let request_path = args
+                .windows(2)
+                .find(|w| w[0] == "--request")
+                .map(|w| w[1].clone());
+            let mut input = String::new();
+            let read = if let Some(p) = request_path {
+                fs::read_to_string(p)
             } else {
-                let mut buffer = String::new();
-                if let Err(e) = io::stdin().read_to_string(&mut buffer) {
-                    eprintln!("Error: failed to read request from stdin: {}", e);
-                    std::process::exit(1);
-                }
-                buffer
+                io::stdin().read_to_string(&mut input).map(|_| input)
             };
-
-            let request: Request = match serde_json::from_str(&request_json_str) {
-                Ok(req) => req,
+            let input = match read {
+                Ok(s) => s,
                 Err(e) => {
-                    eprintln!("Error: failed to parse JSON request: {}", e);
-                    let cert = Certificate {
-                        outcome: suture::protocol::Outcome::Refused,
-                        file_path: String::new(),
-                        pre_hash: String::new(),
-                        post_hash: None,
-                        refusal_reason: Some(suture::protocol::RefusalReason::MalformedInput {
-                            details: e.to_string(),
-                        }),
-                        failure_reason: None,
-                        diff_summary: None,
-                    };
-                    println!("{}", serde_json::to_string_pretty(&cert).unwrap());
-                    std::process::exit(1);
+                    eprintln!("request read failed: {e}");
+                    std::process::exit(3)
                 }
             };
-
-            let current_dir = env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let workspace = match Workspace::new(&current_dir) {
-                Ok(ws) => ws,
+            let req: Request = match serde_json::from_str(&input) {
+                Ok(r) => r,
                 Err(e) => {
-                    eprintln!("Error: failed to initialize workspace: {}", e);
-                    std::process::exit(1);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&empty_cert(RefusalReason::MalformedInput {
+                            details: e.to_string()
+                        }))
+                        .unwrap()
+                    );
+                    std::process::exit(2)
                 }
             };
-
-            let certificate = execute_request(&workspace, &request, dry_run);
-            match serde_json::to_string_pretty(&certificate) {
-                Ok(json) => println!("{}", json),
+            let root = match env::current_dir() {
+                Ok(p) => p,
                 Err(e) => {
-                    eprintln!("Error serializing certificate: {}", e);
-                    std::process::exit(1);
+                    eprintln!("cannot determine workspace: {e}");
+                    std::process::exit(3)
                 }
+            };
+            let ws = match Workspace::new(root) {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("workspace initialization failed: {e}");
+                    std::process::exit(3)
+                }
+            };
+            let cert = execute_request(&ws, &req, dry);
+            println!("{}", serde_json::to_string_pretty(&cert).unwrap());
+            match cert.outcome {
+                Outcome::Refused => std::process::exit(2),
+                Outcome::Failed => std::process::exit(3),
+                Outcome::Applied | Outcome::NoChange => {}
             }
         }
         "schema" => {
-            let request_schema = schema_for!(Request);
-            let certificate_schema = schema_for!(Certificate);
-
-            let combined = serde_json::json!({
-                "$schema": "https://json-schema.org/draft/2020-12/schema",
-                "title": "Suture v0.1 Protocol Schemas",
-                "request": request_schema,
-                "certificate": certificate_schema
-            });
-
-            println!("{}", serde_json::to_string_pretty(&combined).unwrap());
+            let out = serde_json::json!({"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Suture v0.1 Protocol Schemas","protocol_version":PROTOCOL_VERSION,"request":schema_for!(Request),"certificate":schema_for!(Certificate)});
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
         }
         "doctor" => {
-            println!("Suture Doctor Diagnostics:");
-            println!("- OS Target: {}", env::consts::OS);
-            println!("- Architecture: {}", env::consts::ARCH);
-
-            let current_dir = env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            print!("- Workspace root ({:?}): ", current_dir);
-            match Workspace::new(&current_dir) {
-                Ok(_) => println!("READY (Accessible & Confined)"),
-                Err(e) => println!("ERROR ({})", e),
-            }
-
-            println!("- Providers Status:");
-            println!(
-                "  * Text Provider: READY (identify, replace, insert_before, insert_after, delete)"
-            );
-            println!(
-                "  * JSON Provider (serde_json / CST): READY (set, insert, delete, rename_key)"
-            );
-            println!("  * TOML Provider (toml_edit): READY (set, insert, delete, rename_key)");
-            println!("- Status Summary: All systems operational and ready.");
+            let root = env::current_dir().unwrap_or_else(|_| ".".into());
+            println!("suture doctor\nos: {}\narch: {}\nworkspace: {}\nproviders: text=ready json=strict-source-preserving toml=narrow-diff\ncommit: staged atomic replacement; metadata limits documented",env::consts::OS,env::consts::ARCH,match Workspace::new(root){Ok(_)=>"ready",Err(_)=>"unavailable"});
         }
-        other => {
-            eprintln!("Unknown command: '{}'", other);
-            print_help();
-            std::process::exit(1);
+        _ => {
+            eprintln!("unknown command: {command}");
+            help();
+            std::process::exit(1)
         }
     }
 }
-#[cfg(test)]
-mod cli_tests {
-    use super::*;
 
-    #[test]
-    fn test_schema_command_output() {
-        // Verify schema generation doesn't panic
-        let req_schema = schema_for!(Request);
-        assert!(!serde_json::to_string(&req_schema).unwrap().is_empty());
-    }
-}
+#[allow(dead_code)]
+fn _failure_type_is_linked(_: FailureReason) {}

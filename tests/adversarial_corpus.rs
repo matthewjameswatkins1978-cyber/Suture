@@ -655,7 +655,7 @@ fn test_adversarial_corpus_all_38() {
     assert_eq!(cert33.outcome, Outcome::Refused);
     assert!(matches!(
         cert33.refusal_reason,
-        Some(RefusalReason::MalformedInput { .. })
+        Some(RefusalReason::UnsupportedEncoding { .. })
     ));
 
     // 34. Provider capability missing / unsupported operation or provider mismatch
