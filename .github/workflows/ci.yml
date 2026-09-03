@@ -22,4 +22,6 @@ jobs:
       - run: cargo build --release
       - run: cargo run --release -- --version
       - run: cargo run --release -- doctor
+      - run: cargo run --release -- capabilities
       - run: cargo run --release -- schema
+      - run: cargo run --release -- --help

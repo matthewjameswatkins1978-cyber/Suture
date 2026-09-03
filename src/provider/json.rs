@@ -25,6 +25,20 @@ pub enum JsonOperation {
         path: String,
         new_key: String,
     },
+    EnsurePresent {
+        path: String,
+        value: serde_json::Value,
+    },
+    EnsureAbsent {
+        path: String,
+    },
+    Unset {
+        path: String,
+    },
+    Rename {
+        path: String,
+        new_key: String,
+    },
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -43,7 +57,12 @@ impl JsonProvider {
         op: &JsonOperation,
         cardinality: &Cardinality,
     ) -> Result<Vec<ByteEdit>, JsonProviderError> {
-        if !matches!(cardinality, Cardinality::ExactlyOne) {
+        if !matches!(cardinality, Cardinality::ExactlyOne)
+            && !matches!(
+                op,
+                JsonOperation::EnsureAbsent { .. } | JsonOperation::Unset { .. }
+            )
+        {
             return Err(JsonProviderError::Refused(
                 RefusalReason::CardinalityMismatch {
                     expected: "exactly_one (structured paths are unique)".into(),
@@ -72,6 +91,35 @@ impl JsonProvider {
             } => insert_edit(content, &tree, path, key_or_index, value)?,
             JsonOperation::Delete { path } => delete_edit(&tree, path)?,
             JsonOperation::RenameKey { path, new_key } => rename_edit(&tree, path, new_key)?,
+            JsonOperation::EnsurePresent { path, value } => {
+                let segments = parse_path(path)?;
+                match locate(&tree, &segments) {
+                    Ok(node) => ByteEdit {
+                        start: node.start,
+                        end: node.end,
+                        replacement: serde_json::to_vec(value).map_err(|e| {
+                            JsonProviderError::Error {
+                                message: e.to_string(),
+                            }
+                        })?,
+                    },
+                    Err(JsonProviderError::Refused(RefusalReason::MissingTarget { .. })) => {
+                        let (parent_path, key) = split_json_path(&segments)?;
+                        insert_edit(content, &tree, &parent_path, &key, value)?
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            JsonOperation::EnsureAbsent { path } | JsonOperation::Unset { path } => {
+                match delete_edit(&tree, path) {
+                    Ok(edit) => edit,
+                    Err(JsonProviderError::Refused(RefusalReason::MissingTarget { .. })) => {
+                        return Ok(Vec::new())
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            JsonOperation::Rename { path, new_key } => rename_edit(&tree, path, new_key)?,
         };
         if edit.start == edit.end && edit.replacement.is_empty() {
             Ok(Vec::new())
@@ -385,6 +433,32 @@ fn parent<'a, 'b>(
 }
 fn missing(s: &str) -> JsonProviderError {
     JsonProviderError::Refused(RefusalReason::MissingTarget { target: s.into() })
+}
+
+fn split_json_path(segments: &[Segment]) -> Result<(String, String), JsonProviderError> {
+    let Some(last) = segments.last() else {
+        return Err(missing("cannot ensure the JSON root is present"));
+    };
+    let key = match last {
+        Segment::Key(key) => key.clone(),
+        Segment::Index(_) => return Err(missing("ensure_present requires an object key")),
+    };
+    let mut path = String::from("$");
+    for segment in &segments[..segments.len() - 1] {
+        match segment {
+            Segment::Key(key) => {
+                path.push('[');
+                path.push_str(&serde_json::to_string(key).unwrap());
+                path.push(']');
+            }
+            Segment::Index(index) => {
+                path.push('[');
+                path.push_str(&index.to_string());
+                path.push(']');
+            }
+        }
+    }
+    Ok((path, key))
 }
 fn json_bytes(v: &serde_json::Value) -> Result<Vec<u8>, JsonProviderError> {
     serde_json::to_vec(v).map_err(|e| JsonProviderError::Error {

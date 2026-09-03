@@ -19,6 +19,8 @@ pub enum WorkspaceError {
     StaleIdentity { expected: String, actual: String },
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
+    #[error("destination already exists: {0}")]
+    AlreadyExists(String),
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +120,79 @@ impl Workspace {
             return Err(WorkspaceError::NotFound(resolved.display().to_string()));
         }
         Ok(fs::read(resolved)?)
+    }
+
+    pub fn create_file_new<P: AsRef<Path>>(
+        &self,
+        rel_path: P,
+        bytes: &[u8],
+    ) -> Result<(), WorkspaceError> {
+        let resolved = self.resolve_path(rel_path)?;
+        if resolved.exists() {
+            return Err(WorkspaceError::AlreadyExists(
+                resolved.display().to_string(),
+            ));
+        }
+        if let Some(parent) = resolved.parent() {
+            fs::create_dir_all(parent)?;
+            self.ensure_parent(parent)?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&resolved)?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        file.sync_all()?;
+        Ok(())
+    }
+
+    pub fn delete_file_checked<P: AsRef<Path>>(
+        &self,
+        rel_path: P,
+        expected_hash: &str,
+    ) -> Result<(), WorkspaceError> {
+        let resolved = self.resolve_path(rel_path)?;
+        let current = fs::read(&resolved)?;
+        let actual = sha256(&current);
+        if actual != expected_hash {
+            return Err(WorkspaceError::StaleIdentity {
+                expected: expected_hash.into(),
+                actual,
+            });
+        }
+        fs::remove_file(resolved)?;
+        Ok(())
+    }
+
+    pub fn rename_file_checked<P: AsRef<Path>, Q: AsRef<Path>>(
+        &self,
+        source: P,
+        destination: Q,
+        expected_hash: &str,
+        destination_absent: bool,
+    ) -> Result<(), WorkspaceError> {
+        let source = self.resolve_path(source)?;
+        let destination = self.resolve_path(destination)?;
+        let current = fs::read(&source)?;
+        let actual = sha256(&current);
+        if actual != expected_hash {
+            return Err(WorkspaceError::StaleIdentity {
+                expected: expected_hash.into(),
+                actual,
+            });
+        }
+        if destination_absent && destination.exists() {
+            return Err(WorkspaceError::AlreadyExists(
+                destination.display().to_string(),
+            ));
+        }
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+            self.ensure_parent(parent)?;
+        }
+        fs::rename(source, destination)?;
+        Ok(())
     }
 
     pub fn write_file_atomic<P: AsRef<Path>>(

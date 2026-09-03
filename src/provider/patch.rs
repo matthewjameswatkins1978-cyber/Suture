@@ -1,0 +1,152 @@
+#![forbid(unsafe_code)]
+
+use crate::engine::ByteEdit;
+use crate::protocol::{Cardinality, RefusalReason};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PatchOperation {
+    UnifiedDiff { patch: String },
+}
+
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum PatchError {
+    #[error("Refused: {0:?}")]
+    Refused(RefusalReason),
+}
+
+pub fn plan(
+    content: &[u8],
+    operation: &PatchOperation,
+    cardinality: &Cardinality,
+) -> Result<Vec<ByteEdit>, PatchError> {
+    if !matches!(cardinality, Cardinality::ExactlyOne) {
+        return Err(PatchError::Refused(RefusalReason::CardinalityMismatch {
+            expected: "exactly_one patch document".into(),
+            actual: 1,
+        }));
+    }
+    let PatchOperation::UnifiedDiff { patch } = operation;
+    let lines: Vec<&str> = patch.split_inclusive('\n').collect();
+    let file_headers = lines.iter().filter(|line| line.starts_with("--- ")).count();
+    if file_headers != 1 {
+        return Err(PatchError::Refused(RefusalReason::Custom {
+            message: "strict patch requires exactly one file".into(),
+        }));
+    }
+    let plus = lines
+        .iter()
+        .position(|line| line.starts_with("+++ "))
+        .ok_or_else(|| malformed("missing +++ file header"))?;
+    if plus == 0 {
+        return Err(malformed("missing --- file header"));
+    }
+    let source = std::str::from_utf8(content).map_err(|_| {
+        PatchError::Refused(RefusalReason::UnsupportedEncoding {
+            details: "patch provider requires UTF-8".into(),
+        })
+    })?;
+    let source_lines: Vec<&str> = source.split_inclusive('\n').collect();
+    let mut edits = Vec::new();
+    let mut i = plus + 1;
+    while i < lines.len() {
+        if !lines[i].starts_with("@@ ") {
+            i += 1;
+            continue;
+        }
+        let (old_start, old_count) = parse_range(lines[i], '-')?;
+        let (_, new_count) = parse_range(lines[i], '+')?;
+        i += 1;
+        let mut old_lines = Vec::new();
+        let mut new_lines = Vec::new();
+        while i < lines.len() && !lines[i].starts_with("@@ ") && !lines[i].starts_with("--- ") {
+            let line = lines[i];
+            if line.trim_end_matches(['\r', '\n']) == "\\ No newline at end of file" {
+                i += 1;
+                continue;
+            }
+            let (prefix, value) = line.split_at(1);
+            match prefix {
+                " " => {
+                    old_lines.push(value);
+                    new_lines.push(value);
+                }
+                "-" => old_lines.push(value),
+                "+" => new_lines.push(value),
+                _ => return Err(malformed("invalid unified-diff hunk line")),
+            }
+            i += 1;
+        }
+        if old_lines.len() != old_count || new_lines.len() != new_count {
+            return Err(malformed("unified-diff hunk counts do not match body"));
+        }
+        let start_index = old_start.saturating_sub(1);
+        if start_index > source_lines.len()
+            || source_lines
+                .get(start_index..start_index + old_lines.len())
+                .is_none()
+        {
+            return Err(RefusalReason::MissingTarget {
+                target: format!("patch hunk line {old_start}"),
+            }
+            .into());
+        }
+        let actual = &source_lines[start_index..start_index + old_lines.len()];
+        if actual != old_lines.as_slice() {
+            return Err(RefusalReason::StaleIdentity {
+                expected_hash: "exact patch preimage".into(),
+                actual_hash: "current file differs from hunk context".into(),
+            }
+            .into());
+        }
+        let start = source_lines[..start_index]
+            .iter()
+            .map(|line| line.len())
+            .sum();
+        let end = start + actual.iter().map(|line| line.len()).sum::<usize>();
+        edits.push(ByteEdit {
+            start,
+            end,
+            replacement: new_lines.concat().into_bytes(),
+        });
+    }
+    if edits.is_empty() {
+        return Err(malformed("patch contains no hunks"));
+    }
+    Ok(edits)
+}
+
+fn parse_range(line: &str, prefix: char) -> Result<(usize, usize), PatchError> {
+    let marker = format!(" {prefix}");
+    let value = line
+        .split_whitespace()
+        .find(|part| part.starts_with(prefix))
+        .ok_or_else(|| malformed("missing hunk range"))?;
+    let value = value.trim_start_matches(prefix);
+    let mut parts = value.split(',');
+    let start = parts
+        .next()
+        .ok_or_else(|| malformed("missing hunk start"))?
+        .parse()
+        .map_err(|_| malformed("invalid hunk start"))?;
+    let count = parts
+        .next()
+        .unwrap_or("1")
+        .parse()
+        .map_err(|_| malformed("invalid hunk count"))?;
+    let _ = marker;
+    Ok((start, count))
+}
+fn malformed(message: &str) -> PatchError {
+    PatchError::Refused(RefusalReason::MalformedInput {
+        details: message.into(),
+    })
+}
+impl From<RefusalReason> for PatchError {
+    fn from(reason: RefusalReason) -> Self {
+        PatchError::Refused(reason)
+    }
+}

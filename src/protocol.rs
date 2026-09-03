@@ -1,11 +1,18 @@
+use crate::lifecycle::FileOperation;
 use crate::path::PathNamespace;
+use crate::pattern::PatternOperation;
+use crate::provider::code::CodeOperation;
+use crate::provider::dotenv::DotenvOperation;
 use crate::provider::json::JsonOperation;
+use crate::provider::markdown::MarkdownOperation;
+use crate::provider::patch::PatchOperation;
 use crate::provider::text::TextOperation;
 use crate::provider::toml::TomlOperation;
+use crate::provider::yaml::YamlOperation;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.1.0";
+pub const PROTOCOL_VERSION: &str = "1.0.0";
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(
@@ -17,20 +24,91 @@ pub const PROTOCOL_VERSION: &str = "0.1.0";
 pub enum OperationPayload {
     Text(TextOperation),
     Json(JsonOperation),
+    Jsonc(JsonOperation),
     Toml(TomlOperation),
+    Pattern(PatternOperation),
+    Markdown(MarkdownOperation),
+    Yaml(YamlOperation),
+    File(FileOperation),
+    Code(CodeOperation),
+    Dotenv(DotenvOperation),
+    Patch(PatchOperation),
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub version: String,
+    #[serde(default)]
+    pub request_id: String,
+    #[serde(default)]
+    pub allow_generated: bool,
     pub file_path: String,
     #[serde(default)]
     pub namespace: PathNamespace,
     pub expected_pre_hash: Option<String>,
     #[serde(default)]
+    pub region_guard: Option<RegionGuard>,
+    #[serde(default)]
     pub cardinality: Cardinality,
+    #[serde(default)]
+    pub budget: EffectBudget,
     pub operation: OperationPayload,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RegionGuard {
+    pub anchor: String,
+    pub target_sha256: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TransactionRequest {
+    pub version: String,
+    pub transaction_id: String,
+    pub requests: Vec<Request>,
+    #[serde(default)]
+    pub budget: EffectBudget,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TransactionCertificate {
+    pub protocol_version: String,
+    pub transaction_id: String,
+    pub outcome: Outcome,
+    pub certificates: Vec<Certificate>,
+    pub rollback_state: String,
+    pub transaction_guarantee: String,
+    pub refusal_reason: Option<RefusalReason>,
+    pub failure_reason: Option<FailureReason>,
+}
+
+/// A hard upper bound on the mutation's prepared effect. `None` means that
+/// particular dimension is unbounded; Suture still applies its own safety
+/// limits for pathological requests.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct EffectBudget {
+    pub max_files: Option<usize>,
+    pub max_matches: Option<usize>,
+    pub max_changed_regions: Option<usize>,
+    pub max_changed_lines: Option<usize>,
+    pub max_changed_bytes: Option<usize>,
+    pub allowed_path_prefixes: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EffectUsage {
+    pub files: usize,
+    pub matches: usize,
+    pub changed_regions: usize,
+    pub changed_lines: usize,
+    pub changed_bytes: usize,
+    pub passed: bool,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
@@ -96,6 +174,18 @@ pub enum RefusalReason {
     },
     Custom {
         message: String,
+    },
+    EffectBudgetExceeded {
+        dimension: String,
+        limit: usize,
+        actual: usize,
+    },
+    GeneratedFileRequiresOptIn {
+        marker: String,
+    },
+    BinaryInput,
+    DestinationExists {
+        path: String,
     },
 }
 
@@ -189,6 +279,8 @@ pub struct PreservationFacts {
     pub final_newline_changed: bool,
     pub comments_preserved: Option<bool>,
     pub metadata: String,
+    pub original_newline_profile: String,
+    pub result_newline_profile: String,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
@@ -204,6 +296,7 @@ pub struct CommitGuarantee {
 #[serde(deny_unknown_fields)]
 pub struct Certificate {
     pub protocol_version: String,
+    pub request_id: String,
     pub outcome: Outcome,
     pub file_path: String,
     pub provider: String,
@@ -213,6 +306,7 @@ pub struct Certificate {
     pub pre_hash: String,
     pub post_hash: Option<String>,
     pub changed_ranges: Vec<ByteRange>,
+    pub changed_line_ranges: Vec<ByteRange>,
     pub diff_summary: Option<String>,
     pub diff_truncated: bool,
     pub structural_validation: StructuralValidation,
@@ -221,6 +315,10 @@ pub struct Certificate {
     pub refusal_reason: Option<RefusalReason>,
     pub failure_reason: Option<FailureReason>,
     pub diagnostics: Vec<String>,
+    pub budget: EffectBudget,
+    pub effect: EffectUsage,
+    pub transaction_guarantee: String,
+    pub recovery_state: String,
 }
 
 impl Default for PreservationFacts {
@@ -232,6 +330,8 @@ impl Default for PreservationFacts {
             final_newline_changed: false,
             comments_preserved: None,
             metadata: "not_verified".into(),
+            original_newline_profile: "unknown".into(),
+            result_newline_profile: "unknown".into(),
         }
     }
 }

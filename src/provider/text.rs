@@ -12,6 +12,12 @@ pub enum TextOperation {
     InsertBefore { target: String, content: String },
     InsertAfter { target: String, content: String },
     Delete { target: String },
+    Move { target: String, before: String },
+    EnsurePresent { content: String },
+    EnsureAbsent { target: String },
+    Set { target: String, replacement: String },
+    Unset { target: String },
+    Rename { target: String, replacement: String },
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -37,6 +43,32 @@ impl TextProvider {
         op: &TextOperation,
         cardinality: &Cardinality,
     ) -> Result<Vec<crate::engine::ByteEdit>, TextProviderError> {
+        if let TextOperation::EnsurePresent { content: wanted } = op {
+            if wanted.is_empty() {
+                return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
+                    target: "empty ensure_present content".into(),
+                }));
+            }
+            if content
+                .windows(wanted.len())
+                .any(|w| w == wanted.as_bytes())
+            {
+                return Ok(Vec::new());
+            }
+            let mut replacement = Vec::new();
+            if !content.is_empty() && !content.ends_with(b"\n") {
+                replacement.push(b'\n');
+            }
+            replacement.extend_from_slice(wanted.as_bytes());
+            return Ok(vec![crate::engine::ByteEdit {
+                start: content.len(),
+                end: content.len(),
+                replacement,
+            }]);
+        }
+        if let TextOperation::Move { target, before } = op {
+            return plan_move(content, target, before, cardinality);
+        }
         let (target, _is_delete, replacement_bytes, is_insert_before, is_insert_after) = match op {
             TextOperation::Replace {
                 target,
@@ -63,6 +95,24 @@ impl TextProvider {
                 false,
                 true,
             ),
+            TextOperation::EnsureAbsent { target } | TextOperation::Unset { target } => {
+                (target.as_bytes(), true, Vec::new(), false, false)
+            }
+            TextOperation::Set {
+                target,
+                replacement,
+            }
+            | TextOperation::Rename {
+                target,
+                replacement,
+            } => (
+                target.as_bytes(),
+                false,
+                replacement.as_bytes().to_vec(),
+                false,
+                false,
+            ),
+            TextOperation::Move { .. } | TextOperation::EnsurePresent { .. } => unreachable!(),
         };
 
         if target.is_empty() {
@@ -88,34 +138,66 @@ impl TextProvider {
 
         let match_count = matches.len();
 
+        if matches!(
+            op,
+            TextOperation::EnsureAbsent { .. } | TextOperation::Unset { .. }
+        ) && match_count == 0
+        {
+            return Ok(Vec::new());
+        }
+        if matches!(op, TextOperation::Set { .. } | TextOperation::Rename { .. })
+            && match_count == 0
+        {
+            let replacement_present = content
+                .windows(replacement_bytes.len())
+                .any(|w| w == replacement_bytes.as_slice());
+            if replacement_present {
+                return Ok(Vec::new());
+            }
+        }
+
         // Enforce cardinality
         match cardinality {
             Cardinality::ExactlyOne => {
-                if match_count == 0 {
-                    let near_miss = diagnose_near_miss(content, target);
-                    return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
-                        target: near_miss,
-                    }));
-                } else if match_count > 1 {
-                    return Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
-                        target: String::from_utf8_lossy(target).to_string(),
-                        count: match_count,
-                        candidates: candidate_diagnostics(content, target, &matches),
-                    }));
+                if matches!(
+                    op,
+                    TextOperation::EnsureAbsent { .. } | TextOperation::Unset { .. }
+                ) {
+                    // Desired-state absence is deliberately idempotent and removes every match.
+                } else {
+                    if match_count == 0 {
+                        let near_miss = diagnose_near_miss(content, target);
+                        return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
+                            target: near_miss,
+                        }));
+                    } else if match_count > 1 {
+                        return Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
+                            target: String::from_utf8_lossy(target).to_string(),
+                            count: match_count,
+                            candidates: candidate_diagnostics(content, target, &matches),
+                        }));
+                    }
                 }
             }
             Cardinality::Exactly(n) => {
-                if match_count < *n {
-                    let near_miss = diagnose_near_miss(content, target);
-                    return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
-                        target: near_miss,
-                    }));
-                } else if match_count > *n {
-                    return Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
-                        target: String::from_utf8_lossy(target).to_string(),
-                        count: match_count,
-                        candidates: candidate_diagnostics(content, target, &matches),
-                    }));
+                if matches!(
+                    op,
+                    TextOperation::EnsureAbsent { .. } | TextOperation::Unset { .. }
+                ) {
+                    // Desired-state absence is deliberately idempotent and removes every match.
+                } else {
+                    if match_count < *n {
+                        let near_miss = diagnose_near_miss(content, target);
+                        return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
+                            target: near_miss,
+                        }));
+                    } else if match_count > *n {
+                        return Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
+                            target: String::from_utf8_lossy(target).to_string(),
+                            count: match_count,
+                            candidates: candidate_diagnostics(content, target, &matches),
+                        }));
+                    }
                 }
             }
             Cardinality::All => {
@@ -156,6 +238,70 @@ impl TextProvider {
 
         Ok(edits)
     }
+}
+
+fn find_matches(content: &[u8], target: &[u8]) -> Vec<usize> {
+    if target.is_empty() || target.len() > content.len() {
+        return Vec::new();
+    }
+    let mut matches = Vec::new();
+    let mut at = 0;
+    while at + target.len() <= content.len() {
+        if &content[at..at + target.len()] == target {
+            matches.push(at);
+            at += target.len();
+        } else {
+            at += 1;
+        }
+    }
+    matches
+}
+
+fn plan_move(
+    content: &[u8],
+    target: &str,
+    before: &str,
+    cardinality: &Cardinality,
+) -> Result<Vec<crate::engine::ByteEdit>, TextProviderError> {
+    if !matches!(cardinality, Cardinality::ExactlyOne) {
+        return Err(TextProviderError::Refused(
+            RefusalReason::CardinalityMismatch {
+                expected: "exactly_one (move anchors are unique)".into(),
+                actual: 1,
+            },
+        ));
+    }
+    let targets = find_matches(content, target.as_bytes());
+    let destinations = find_matches(content, before.as_bytes());
+    if targets.len() != 1 || destinations.len() != 1 || target.is_empty() || before.is_empty() {
+        return Err(TextProviderError::Refused(
+            RefusalReason::CardinalityMismatch {
+                expected: "one target and one destination".into(),
+                actual: targets.len().saturating_add(destinations.len()),
+            },
+        ));
+    }
+    let source = targets[0];
+    let source_end = source + target.len();
+    let destination = destinations[0];
+    if source <= destination && destination < source_end {
+        return Ok(Vec::new());
+    }
+    let insertion = destination;
+    let mut edits = vec![
+        crate::engine::ByteEdit {
+            start: insertion,
+            end: insertion,
+            replacement: target.as_bytes().to_vec(),
+        },
+        crate::engine::ByteEdit {
+            start: source,
+            end: source_end,
+            replacement: Vec::new(),
+        },
+    ];
+    edits.sort_by_key(|edit| edit.start);
+    Ok(edits)
 }
 
 fn diagnose_near_miss(content: &[u8], target: &[u8]) -> String {
