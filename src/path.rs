@@ -58,13 +58,21 @@ impl PathNormalizer {
                 }
             }
             PathNamespace::Wsl { .. } => {
-                // Convert /mnt/c/foo -> C:\foo on Windows host if running on Windows under WSL, otherwise keep POSIX path
+                // Convert any /mnt/<drive>/foo -> <DRIVE>:\foo on Windows.
+                // The mount letter is data from the caller, never an assumed C:.
                 #[cfg(target_os = "windows")]
                 {
-                    if normalized.starts_with("/mnt/") && normalized.len() >= 7 {
-                        let drive = normalized.chars().nth(5).unwrap().to_ascii_uppercase();
-                        let rest = &normalized[6..];
-                        return PathBuf::from(format!("{}:\\{}", drive, rest.replace('/', "\\")));
+                    if let Some(mounted) = normalized.strip_prefix("/mnt/") {
+                        let mut parts = mounted.splitn(2, '/');
+                        if let (Some(letter), Some(rest)) = (parts.next(), parts.next()) {
+                            if letter.len() == 1 && letter.as_bytes()[0].is_ascii_alphabetic() {
+                                return PathBuf::from(format!(
+                                    "{}:\\{}",
+                                    letter.to_ascii_uppercase(),
+                                    rest.replace('/', "\\")
+                                ));
+                            }
+                        }
                     }
                 }
                 PathBuf::from(normalized)

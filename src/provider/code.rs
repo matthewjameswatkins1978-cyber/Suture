@@ -179,9 +179,9 @@ pub fn validate(content: &[u8], language_name: &str) -> Result<(), CodeError> {
 
 fn language(name: &str) -> Result<Language, CodeError> {
     match name.to_ascii_lowercase().as_str() {
-        "javascript" | "js" | "typescript" | "ts" | "jsx" | "tsx" => {
-            Ok(tree_sitter_javascript::LANGUAGE.into())
-        }
+        "javascript" | "js" | "jsx" => Ok(tree_sitter_javascript::LANGUAGE.into()),
+        "typescript" | "ts" => Ok(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        "tsx" => Ok(tree_sitter_typescript::LANGUAGE_TSX.into()),
         "python" | "py" => Ok(tree_sitter_python::LANGUAGE.into()),
         "rust" | "rs" => Ok(tree_sitter_rust::LANGUAGE.into()),
         "go" | "golang" => Ok(tree_sitter_go::LANGUAGE.into()),

@@ -188,6 +188,9 @@ pub enum RefusalReason {
     DestinationExists {
         path: String,
     },
+    UnmappablePath {
+        path: String,
+    },
 }
 
 impl RefusalReason {
@@ -212,6 +215,7 @@ impl RefusalReason {
             Self::GeneratedFileRequiresOptIn { .. } => "GENERATED_FILE_REQUIRES_OPT_IN",
             Self::BinaryInput => "BINARY_INPUT",
             Self::DestinationExists { .. } => "DESTINATION_EXISTS",
+            Self::UnmappablePath { .. } => "PATH_UNMAPPABLE",
         }
     }
 }

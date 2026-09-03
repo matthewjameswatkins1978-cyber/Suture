@@ -694,6 +694,14 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
         ["inspect"]
     );
     reason!(
+        "PATH_UNMAPPABLE",
+        "The declared path namespace cannot be mapped to this execution environment.",
+        "Suture will not guess a drive, mount, or distribution mapping.",
+        "correct_path_namespace",
+        false,
+        ["capabilities", "inspect"]
+    );
+    reason!(
         "COMMIT_FAILED",
         "The prepared candidate could not be committed.",
         "The certificate reports commit or recovery state explicitly.",
