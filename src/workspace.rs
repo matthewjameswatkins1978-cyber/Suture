@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::path::{PathNamespace, PathNormalizer};
+use crate::protocol::MAX_FILE_BYTES;
 use atomic_write_file::AtomicWriteFile;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -24,6 +25,12 @@ pub enum WorkspaceError {
     AlreadyExists(String),
     #[error("path cannot be mapped from its declared namespace: {0}")]
     UnmappablePath(String),
+    #[error("resource limit exceeded for {dimension}: {actual} > {limit}")]
+    ResourceLimit {
+        dimension: String,
+        limit: usize,
+        actual: usize,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -174,6 +181,14 @@ impl Workspace {
         if !resolved.is_file() {
             return Err(WorkspaceError::NotFound(resolved.display().to_string()));
         }
+        let length = fs::metadata(&resolved)?.len();
+        if length > MAX_FILE_BYTES as u64 {
+            return Err(WorkspaceError::ResourceLimit {
+                dimension: "max_file_bytes".into(),
+                limit: MAX_FILE_BYTES,
+                actual: length.min(usize::MAX as u64) as usize,
+            });
+        }
         Ok(fs::read(resolved)?)
     }
 
@@ -208,6 +223,7 @@ impl Workspace {
         expected_hash: &str,
     ) -> Result<(), WorkspaceError> {
         let resolved = self.resolve_path(rel_path)?;
+        self.ensure_file_size(&resolved)?;
         let current = fs::read(&resolved)?;
         let actual = sha256(&current);
         if actual != expected_hash {
@@ -229,6 +245,7 @@ impl Workspace {
     ) -> Result<(), WorkspaceError> {
         let source = self.resolve_path(source)?;
         let destination = self.resolve_path(destination)?;
+        self.ensure_file_size(&source)?;
         let current = fs::read(&source)?;
         let actual = sha256(&current);
         if actual != expected_hash {
@@ -277,6 +294,7 @@ impl Workspace {
         bytes: &[u8],
     ) -> Result<(), WorkspaceError> {
         let resolved = self.resolve_path(rel_path)?;
+        self.ensure_file_size(&resolved)?;
         let observed = fs::read(&resolved)?;
         let actual = sha256(&observed);
         if actual != expected_hash {
@@ -299,6 +317,18 @@ impl Workspace {
         let canonical = fs::canonicalize(parent)?;
         if !canonical.starts_with(&self.root) {
             return Err(WorkspaceError::SymlinkEscape(parent.display().to_string()));
+        }
+        Ok(())
+    }
+
+    fn ensure_file_size(&self, path: &Path) -> Result<(), WorkspaceError> {
+        let length = fs::metadata(path)?.len();
+        if length > MAX_FILE_BYTES as u64 {
+            return Err(WorkspaceError::ResourceLimit {
+                dimension: "max_file_bytes".into(),
+                limit: MAX_FILE_BYTES,
+                actual: length.min(usize::MAX as u64) as usize,
+            });
         }
         Ok(())
     }
