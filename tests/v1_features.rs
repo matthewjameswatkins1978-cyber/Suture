@@ -58,6 +58,33 @@ fn every_provider_operation_is_in_canonical_operation_metadata() {
 }
 
 #[test]
+fn capability_operation_selection_refuses_unadvertised_pair() {
+    let view = suture::metadata::capability_view(Some("filesystem.set"));
+    assert_eq!(view["providers"].as_array().unwrap().len(), 1);
+    assert_eq!(view["providers"][0]["operation_supported"], false);
+    assert_eq!(view["selection_error"]["operation"], "set");
+    assert!(view.get("selected_operation").is_none());
+}
+
+#[test]
+fn ambiguous_suggestion_never_selects_the_first_provider() {
+    let suggestion = suture::metadata::suggest(
+        "config.unknown",
+        Some("set-value"),
+        Some("$.name"),
+        "safe",
+        Some(br#"{"name":"old"}"#),
+    );
+    assert_eq!(suggestion.provider, "ambiguous");
+    assert!(suggestion.request_template.is_none());
+    assert!(suggestion
+        .blocked_reasons
+        .iter()
+        .any(|reason| reason.contains("ambiguous")));
+    assert_eq!(suggestion.alternatives.len(), 3);
+}
+
+#[test]
 fn capabilities_do_not_advertise_unsupported_lifecycle_transactions() {
     let filesystem = suture::metadata::provider_metadata()
         .into_iter()
@@ -452,6 +479,17 @@ fn multi_file_transaction_prepares_then_commits_and_cleans_journal() {
             |certificate| certificate.commit.mode == "committed_atomic_replace"
                 && certificate.transaction_guarantee == "transactional_with_rollback"
         ));
+    let a_certificate = c
+        .certificates
+        .iter()
+        .find(|certificate| certificate.file_path == "a.txt")
+        .unwrap();
+    assert_eq!(a_certificate.pre_hash, compute_sha256(b"old-a"));
+    let expected_post_hash = compute_sha256(b"new-a");
+    assert_eq!(
+        a_certificate.post_hash.as_deref(),
+        Some(expected_post_hash.as_str())
+    );
     assert_eq!(w.read_file("a.txt").unwrap(), b"new-a");
     assert_eq!(w.read_file("b.txt").unwrap(), b"new-b");
     assert!(!t.path().join(".suture-recovery/tx-v1-test.json").exists());

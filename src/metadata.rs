@@ -890,24 +890,41 @@ pub fn capability_view(selector: Option<&str>) -> Value {
     };
     let mut view = manifest;
     if let Some((provider, operation)) = selector.split_once('.') {
-        view["providers"] = view["providers"]
+        let provider_entries: Vec<Value> = view["providers"]
             .as_array()
             .into_iter()
             .flat_map(|providers| providers.iter())
             .filter(|entry| entry["name"] == provider)
-            .map(|entry| {
-                let mut value = entry.clone();
-                value["selected_operation"] = Value::String(operation.into());
-                value
+            .cloned()
+            .collect();
+        let supported = provider_entries.first().is_some_and(|entry| {
+            entry["operations"]
+                .as_array()
+                .is_some_and(|operations| operations.iter().any(|value| value == operation))
+        });
+        view["providers"] = provider_entries
+            .into_iter()
+            .map(|mut entry| {
+                entry["selected_operation"] = Value::String(operation.into());
+                entry["operation_supported"] = Value::Bool(supported);
+                entry
             })
             .collect::<Vec<_>>()
             .into();
-        if let Some(metadata) = operation_metadata()
-            .into_iter()
-            .find(|entry| entry.name == operation)
-        {
-            view["selected_operation"] =
-                serde_json::to_value(metadata).expect("operation serializes");
+        if supported {
+            if let Some(metadata) = operation_metadata()
+                .into_iter()
+                .find(|entry| entry.name == operation)
+            {
+                view["selected_operation"] =
+                    serde_json::to_value(metadata).expect("operation serializes");
+            }
+        } else {
+            view["selection_error"] = json!({
+                "provider": provider,
+                "operation": operation,
+                "reason": "operation is not advertised for this provider"
+            });
         }
     } else {
         view["providers"] = view["providers"]
@@ -1342,10 +1359,15 @@ pub fn suggest(
     bytes: Option<&[u8]>,
 ) -> Suggestion {
     let (detected, basis, candidates) = detect_provider(path, bytes);
-    let selected = candidates
-        .first()
-        .map(String::as_str)
-        .unwrap_or(detected.as_str());
+    // An ambiguous content-based detection is evidence, not permission to
+    // choose the first provider. Keep the request template empty until the
+    // caller explicitly selects a provider through the path/operation it
+    // submits.
+    let selected = if candidates.is_empty() {
+        Some(detected.as_str())
+    } else {
+        None
+    };
     let requested_goal = goal.map(str::to_ascii_lowercase);
     let goal_name = requested_goal.as_deref().unwrap_or("replace-text");
     let allowed_goal = matches!(
@@ -1377,10 +1399,10 @@ pub fn suggest(
         EffectBudget::default()
     };
     let template = allowed_goal
-        .then(|| template_for(selected, path, goal_name, at, &budget))
+        .then(|| selected.and_then(|provider| template_for(provider, path, goal_name, at, &budget)))
         .flatten();
     let mut alternatives = Vec::new();
-    if selected == "text" {
+    if selected == Some("text") {
         alternatives.push(
             serde_json::to_value(base_request(
                 path,
@@ -1410,7 +1432,7 @@ pub fn suggest(
         rationale: if !allowed_goal {
             "The requested goal is outside the controlled 1.1 goal set; choose one of the advertised goals.".into()
         } else if candidates.is_empty() {
-            format!("Use the most specific advertised provider for {selected}; preview before committing when the target is unfamiliar.")
+            format!("Use the most specific advertised provider for {}; preview before committing when the target is unfamiliar.", selected.unwrap_or("the target"))
         } else {
             "Provider detection is ambiguous; choose one of the candidate providers explicitly."
                 .into()

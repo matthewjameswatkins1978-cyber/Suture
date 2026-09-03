@@ -311,6 +311,196 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
     certificate
 }
 
+struct PreparedContent {
+    path: String,
+    original: Vec<u8>,
+    candidate: Vec<u8>,
+    certificate: Certificate,
+}
+
+/// Prepare one content request exactly once and retain the observed source,
+/// candidate, and certificate together. Transactions must not preview a
+/// request and then reopen/replan it: that creates a certificate race in
+/// which the evidence can describe different bytes from the committed plan.
+#[allow(clippy::result_large_err)]
+fn prepare_content_request(
+    workspace: &Workspace,
+    request: &Request,
+) -> Result<PreparedContent, Certificate> {
+    let normalized_path = PathNormalizer::normalize(&request.file_path, &request.namespace);
+    let provider = provider_name(&request.operation);
+    let file_path = match workspace.resolve_namespaced_path(&request.file_path, &request.namespace)
+    {
+        Ok(path) => path,
+        Err(error) => return Err(workspace_error(request, &normalized_path, provider, error)),
+    };
+    if request.version != PROTOCOL_VERSION {
+        return Err(refusal(
+            request,
+            &file_path,
+            provider,
+            RefusalReason::UnsupportedProtocolVersion {
+                requested: request.version.clone(),
+                supported: PROTOCOL_VERSION.into(),
+            },
+            String::new(),
+        ));
+    }
+    if !request.budget.allowed_path_prefixes.is_empty()
+        && !request
+            .budget
+            .allowed_path_prefixes
+            .iter()
+            .any(|prefix| file_path == *prefix || file_path.starts_with(&format!("{prefix}/")))
+    {
+        return Err(refusal(
+            request,
+            &file_path,
+            provider,
+            RefusalReason::WorkspaceTraversal {
+                path: "path is outside requested budget scope".into(),
+            },
+            String::new(),
+        ));
+    }
+    let original = match workspace.read_file(&file_path) {
+        Ok(bytes) => bytes,
+        Err(error) => return Err(workspace_error(request, &file_path, provider, error)),
+    };
+    if original.len() > MAX_FILE_BYTES {
+        return Err(refusal(
+            request,
+            &file_path,
+            provider,
+            RefusalReason::ResourceLimitExceeded {
+                dimension: "max_file_bytes".into(),
+                limit: MAX_FILE_BYTES,
+                actual: original.len(),
+            },
+            String::new(),
+        ));
+    }
+    let pre_hash = compute_sha256(&original);
+    if let Some(expected) = request
+        .expected_pre_hash
+        .as_deref()
+        .filter(|hash| !hash.is_empty())
+    {
+        let expected = normalize_hash(expected);
+        if expected != pre_hash {
+            return Err(refusal(
+                request,
+                &file_path,
+                provider,
+                RefusalReason::StaleIdentity {
+                    expected_hash: expected,
+                    actual_hash: pre_hash.clone(),
+                },
+                pre_hash,
+            ));
+        }
+    }
+    if let Some(guard) = &request.region_guard {
+        if let Err(reason) = validate_region_guard(&original, guard) {
+            return Err(refusal(request, &file_path, provider, reason, pre_hash));
+        }
+    }
+    if let Some(reason) = unsupported_encoding(&original) {
+        return Err(refusal(request, &file_path, provider, reason, pre_hash));
+    }
+    if original.contains(&0) {
+        return Err(refusal(
+            request,
+            &file_path,
+            provider,
+            RefusalReason::BinaryInput,
+            pre_hash,
+        ));
+    }
+    if is_generated_file(&original) && !request.allow_generated {
+        return Err(refusal(
+            request,
+            &file_path,
+            provider,
+            RefusalReason::GeneratedFileRequiresOptIn {
+                marker: generated_marker(&original).into(),
+            },
+            pre_hash,
+        ));
+    }
+    let edits = match plan_edits(&original, request, &file_path) {
+        Ok(edits) => edits,
+        Err((reason, _)) => return Err(refusal(request, &file_path, provider, reason, pre_hash)),
+    };
+    let candidate = match apply_byte_edits(&original, &edits) {
+        Ok(candidate) => candidate,
+        Err(error) => {
+            return Err(failure(
+                request,
+                &file_path,
+                provider,
+                pre_hash,
+                FailureReason::InternalInvariant {
+                    details: error.to_string(),
+                },
+            ))
+        }
+    };
+    let effect = effect_usage(&original, &candidate, &edits, &request.budget);
+    if let Some((dimension, limit, actual)) = budget_violation(&effect, &request.budget) {
+        return Err(refusal_with_effect(
+            request,
+            &file_path,
+            provider,
+            RefusalReason::EffectBudgetExceeded {
+                dimension,
+                limit,
+                actual,
+            },
+            pre_hash,
+            EffectUsage {
+                passed: false,
+                ..effect
+            },
+        ));
+    }
+    let structural = match validate_candidate(request, &candidate) {
+        Ok(validation) => validation,
+        Err(reason) => return Err(failure(request, &file_path, provider, pre_hash, reason)),
+    };
+    let (diff, diff_truncated) = bounded_diff(&original, &edits);
+    let mut certificate = completed(
+        request,
+        &file_path,
+        provider,
+        pre_hash.clone(),
+        Some(compute_sha256(&candidate)),
+        if original == candidate {
+            Outcome::NoChange
+        } else {
+            Outcome::Applied
+        },
+        changed_ranges(&edits),
+        structural,
+        PreservationFacts::from_bytes(&original, &candidate),
+        CommitGuarantee::default(),
+        if original == candidate {
+            String::new()
+        } else {
+            diff
+        },
+        diff_truncated,
+        effect,
+    );
+    certificate.changed_line_ranges = changed_line_ranges(&original, &edits);
+    Ok(PreparedContent {
+        path: file_path,
+        original,
+        candidate,
+        certificate,
+    })
+}
+
 /// Prepare every member against its accepted source, then commit the complete
 /// set behind one durable recovery journal. No member is written during the
 /// preparation pass.
@@ -383,78 +573,33 @@ pub fn execute_transaction(
         if matches!(request.operation, OperationPayload::File(_)) {
             return transaction_refusal(transaction, RefusalReason::UnsupportedOperation { operation: "filesystem lifecycle operations are not yet composable in multi-file transactions".into() });
         }
-        let certificate = execute_request(workspace, request, true);
-        if certificate.outcome == Outcome::Refused {
-            return TransactionCertificate {
-                protocol_version: transaction.version.clone(),
-                transaction_id: transaction.transaction_id.clone(),
-                outcome: Outcome::Refused,
-                certificates: vec![certificate.clone()],
-                rollback_state: "not_started".into(),
-                transaction_guarantee: "not_committed".into(),
-                refusal_reason: certificate.refusal_reason,
-                failure_reason: certificate.failure_reason,
-                reason_code: certificate.reason_code,
-            };
-        }
-        if certificate.outcome == Outcome::Failed {
-            return TransactionCertificate {
-                protocol_version: transaction.version.clone(),
-                transaction_id: transaction.transaction_id.clone(),
-                outcome: Outcome::Failed,
-                certificates: vec![certificate.clone()],
-                rollback_state: "not_started".into(),
-                transaction_guarantee: "not_committed".into(),
-                refusal_reason: None,
-                failure_reason: certificate.failure_reason,
-                reason_code: certificate.reason_code,
-            };
-        }
-        let path = match workspace.resolve_namespaced_path(&request.file_path, &request.namespace) {
-            Ok(path) => path,
-            Err(error) => return transaction_refusal(transaction, workspace_reason(error)),
-        };
-        let original = match workspace.read_file(&path) {
-            Ok(x) => x,
-            Err(e) => {
-                return transaction_failure(
-                    transaction,
-                    FailureReason::IoError {
-                        message: e.to_string(),
-                    },
-                )
+        let prepared_request = match prepare_content_request(workspace, request) {
+            Ok(prepared_request) => prepared_request,
+            Err(certificate) => {
+                return TransactionCertificate {
+                    protocol_version: transaction.version.clone(),
+                    transaction_id: transaction.transaction_id.clone(),
+                    outcome: certificate.outcome.clone(),
+                    certificates: vec![certificate.clone()],
+                    rollback_state: "not_started".into(),
+                    transaction_guarantee: "not_committed".into(),
+                    refusal_reason: certificate.refusal_reason.clone(),
+                    failure_reason: certificate.failure_reason.clone(),
+                    reason_code: certificate.reason_code.clone(),
+                }
             }
         };
-        let edits = match plan_edits(&original, request, &path) {
-            Ok(x) => x,
-            Err((reason, _)) => return transaction_refusal(transaction, reason),
-        };
-        let engine_edits: Vec<ByteEdit> = edits
-            .iter()
-            .map(|e| ByteEdit {
-                start: e.start,
-                end: e.end,
-                replacement: e.replacement.clone(),
-            })
-            .collect();
-        let candidate = match apply_byte_edits(&original, &engine_edits) {
-            Ok(x) => x,
-            Err(e) => {
-                return transaction_failure(
-                    transaction,
-                    FailureReason::InternalInvariant {
-                        details: e.to_string(),
-                    },
-                )
-            }
-        };
-        aggregate.files += usize::from(original != candidate);
-        aggregate.matches += certificate.effect.matches;
-        aggregate.changed_regions += certificate.effect.changed_regions;
-        aggregate.changed_lines += certificate.effect.changed_lines;
-        aggregate.changed_bytes += certificate.effect.changed_bytes;
-        certificates.push(certificate);
-        prepared.push((path, original, candidate));
+        aggregate.files += usize::from(prepared_request.original != prepared_request.candidate);
+        aggregate.matches += prepared_request.certificate.effect.matches;
+        aggregate.changed_regions += prepared_request.certificate.effect.changed_regions;
+        aggregate.changed_lines += prepared_request.certificate.effect.changed_lines;
+        aggregate.changed_bytes += prepared_request.certificate.effect.changed_bytes;
+        certificates.push(prepared_request.certificate);
+        prepared.push((
+            prepared_request.path,
+            prepared_request.original,
+            prepared_request.candidate,
+        ));
     }
     if let Some((dimension, limit, actual)) = budget_violation(&aggregate, &transaction.budget) {
         return transaction_refusal(
