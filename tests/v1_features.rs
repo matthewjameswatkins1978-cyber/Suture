@@ -301,3 +301,34 @@ fn durable_region_guard_survives_unrelated_edit() {
     assert_eq!(c.outcome, Outcome::Applied);
     assert_eq!(w.read_file("x.txt").unwrap(), b"unrelated\nchanged\n");
 }
+
+#[test]
+fn single_file_transaction_resolves_operations_on_coherent_candidate() {
+    let t = TempDir::new().unwrap();
+    let w = Workspace::new(t.path()).unwrap();
+    std::fs::write(t.path().join("x.txt"), b"one two\n").unwrap();
+    let tx = TransactionRequest {
+        version: PROTOCOL_VERSION.into(),
+        transaction_id: "tx-single-file".into(),
+        requests: vec![
+            request(
+                "x.txt",
+                OperationPayload::Text(TextOperation::Replace {
+                    target: "one".into(),
+                    replacement: "first".into(),
+                }),
+            ),
+            request(
+                "x.txt",
+                OperationPayload::Text(TextOperation::Replace {
+                    target: "two".into(),
+                    replacement: "second".into(),
+                }),
+            ),
+        ],
+        budget: EffectBudget::default(),
+    };
+    let c = suture::pipeline::execute_transaction(&w, &tx, false);
+    assert_eq!(c.outcome, Outcome::Applied);
+    assert_eq!(w.read_file("x.txt").unwrap(), b"first second\n");
+}
