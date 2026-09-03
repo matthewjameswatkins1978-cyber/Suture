@@ -112,9 +112,10 @@ fn readonly_failure_leaves_no_staged_candidate_residue() {
     let path = temp.path().join("readonly.txt");
     std::fs::write(&path, b"old\n").unwrap();
 
-    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-    permissions.set_readonly(true);
-    std::fs::set_permissions(&path, permissions).unwrap();
+    let original_permissions = std::fs::metadata(&path).unwrap().permissions();
+    let mut readonly_permissions = original_permissions.clone();
+    readonly_permissions.set_readonly(true);
+    std::fs::set_permissions(&path, readonly_permissions).unwrap();
 
     let workspace = Workspace::new(temp.path()).unwrap();
     let mut mutation = request(
@@ -139,7 +140,5 @@ fn readonly_failure_leaves_no_staged_candidate_residue() {
         .iter()
         .any(|name| name.starts_with(".readonly.txt.")));
 
-    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-    permissions.set_readonly(false);
-    std::fs::set_permissions(&path, permissions).unwrap();
+    std::fs::set_permissions(&path, original_permissions).unwrap();
 }
