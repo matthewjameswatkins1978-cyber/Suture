@@ -53,7 +53,9 @@ jobs:
       - name: Write release manifest
         shell: bash
         run: |
-          printf '%s\n' '{' '  "protocol_version": "'"${GITHUB_REF_NAME#v}"'",' '  "artifacts": [' > dist/release-manifest.json
+          tar -xzf dist/suture-linux-x86_64.tar.gz -C dist
+          protocol_version=$(dist/suture capabilities --json --all | jq -r '.protocol_version')
+          printf '%s\n' '{' '  "protocol_version": "'"$protocol_version"'",' '  "artifacts": [' > dist/release-manifest.json
           first=1
           for file in dist/suture-*.*; do
             case "$file" in *.sha256|*.json) continue;; esac

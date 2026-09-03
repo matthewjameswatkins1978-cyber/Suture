@@ -3,8 +3,8 @@ use suture::lifecycle::FileOperation;
 use suture::pattern::PatternOperation;
 use suture::pipeline::execute_request;
 use suture::protocol::{
-    Cardinality, EffectBudget, OperationPayload, Outcome, RegionGuard, Request, TransactionRequest,
-    PROTOCOL_VERSION,
+    Cardinality, EffectBudget, OperationPayload, Outcome, RegionGuard, RegionGuardMode, Request,
+    TransactionRequest, PROTOCOL_VERSION,
 };
 use suture::provider::code::CodeOperation;
 use suture::provider::json::JsonOperation;
@@ -151,6 +151,15 @@ fn capabilities_are_versioned_and_advertise_budgets() {
             .as_u64()
             .unwrap()
             > 0
+    );
+    assert_eq!(
+        caps["guard_modes"],
+        serde_json::json!([
+            "immediate",
+            "strict_snapshot",
+            "region_snapshot",
+            "structural_snapshot"
+        ])
     );
 }
 
@@ -635,11 +644,36 @@ fn durable_region_guard_survives_unrelated_edit() {
     r.region_guard = Some(RegionGuard {
         anchor: "target".into(),
         target_sha256: compute_sha256(b"target"),
+        mode: RegionGuardMode::RegionSnapshot,
     });
     std::fs::write(t.path().join("x.txt"), b"unrelated\ntarget\n").unwrap();
     let c = execute_request(&w, &r, false);
     assert_eq!(c.outcome, Outcome::Applied);
     assert_eq!(w.read_file("x.txt").unwrap(), b"unrelated\nchanged\n");
+}
+
+#[test]
+fn structural_region_guard_checks_the_code_target() {
+    let t = TempDir::new().unwrap();
+    let w = Workspace::new(t.path()).unwrap();
+    std::fs::write(t.path().join("main.py"), b"value = 1\n").unwrap();
+    let mut r = request(
+        "main.py",
+        OperationPayload::Code(CodeOperation::ReplaceNode {
+            language: "python".into(),
+            target: "1".into(),
+            replacement: "2".into(),
+            node_kind: Some("integer".into()),
+        }),
+    );
+    r.region_guard = Some(RegionGuard {
+        anchor: "1".into(),
+        target_sha256: compute_sha256(b"1"),
+        mode: RegionGuardMode::StructuralSnapshot,
+    });
+    let certificate = execute_request(&w, &r, false);
+    assert_eq!(certificate.outcome, Outcome::Applied);
+    assert_eq!(w.read_file("main.py").unwrap(), b"value = 2\n");
 }
 
 #[test]
@@ -657,6 +691,7 @@ fn empty_region_anchor_is_refused_without_panicking() {
     r.region_guard = Some(RegionGuard {
         anchor: String::new(),
         target_sha256: String::new(),
+        mode: RegionGuardMode::RegionSnapshot,
     });
     let c = execute_request(&w, &r, false);
     assert_eq!(c.outcome, Outcome::Refused);

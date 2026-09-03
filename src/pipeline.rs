@@ -122,7 +122,7 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
         }
     }
     if let Some(guard) = &request.region_guard {
-        if let Err(reason) = validate_region_guard(&original, guard) {
+        if let Err(reason) = validate_region_guard(&original, guard, request) {
             return refusal(request, &file_path, provider, reason, pre_hash);
         }
     }
@@ -401,7 +401,7 @@ fn prepare_content_request(
         }
     }
     if let Some(guard) = &request.region_guard {
-        if let Err(reason) = validate_region_guard(&original, guard) {
+        if let Err(reason) = validate_region_guard(&original, guard, request) {
             return Err(refusal(request, &file_path, provider, reason, pre_hash));
         }
     }
@@ -884,7 +884,7 @@ fn execute_single_file_transaction(
             );
         }
         if let Some(guard) = &request.region_guard {
-            if let Err(reason) = validate_region_guard(&current, guard) {
+            if let Err(reason) = validate_region_guard(&current, guard, request) {
                 return transaction_refusal(transaction, reason);
             }
         }
@@ -1703,6 +1703,7 @@ fn mark_transaction_certificates(certificates: &mut [Certificate], recovery_stat
 fn validate_region_guard(
     content: &[u8],
     guard: &crate::protocol::RegionGuard,
+    request: &Request,
 ) -> Result<(), RefusalReason> {
     if guard.anchor.is_empty() {
         return Err(RefusalReason::MalformedInput {
@@ -1725,6 +1726,33 @@ fn validate_region_guard(
             expected_hash: normalize_hash(&guard.target_sha256),
             actual_hash: actual,
         });
+    }
+    if guard.mode == crate::protocol::RegionGuardMode::StructuralSnapshot {
+        let OperationPayload::Code(operation) = &request.operation else {
+            return Err(RefusalReason::ProviderCapabilityMissing {
+                provider: provider_name(&request.operation).into(),
+                capability: "structural_snapshot requires the code provider".into(),
+            });
+        };
+        let target = match operation {
+            CodeOperation::ReplaceNode { target, .. }
+            | CodeOperation::InsertBeforeNode { target, .. }
+            | CodeOperation::InsertAfterNode { target, .. }
+            | CodeOperation::RemoveNode { target, .. } => target,
+        };
+        if target != &guard.anchor {
+            return Err(RefusalReason::StaleIdentity {
+                expected_hash: normalize_hash(&guard.target_sha256),
+                actual_hash: compute_sha256(target.as_bytes()),
+            });
+        }
+        if let Err(CodeError::Refused(reason)) = code::plan(
+            content,
+            operation,
+            &crate::protocol::Cardinality::ExactlyOne,
+        ) {
+            return Err(reason);
+        }
     }
     Ok(())
 }

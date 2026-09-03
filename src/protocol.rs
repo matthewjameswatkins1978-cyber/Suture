@@ -64,6 +64,16 @@ pub struct Request {
 pub struct RegionGuard {
     pub anchor: String,
     pub target_sha256: String,
+    #[serde(default)]
+    pub mode: RegionGuardMode,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RegionGuardMode {
+    #[default]
+    RegionSnapshot,
+    StructuralSnapshot,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
