@@ -176,6 +176,62 @@ impl Workspace {
         }
     }
 
+    /// Resolve a destination without canonicalising its final spelling. This
+    /// matters for case-only renames on case-insensitive filesystems. Every
+    /// existing component is still canonicalised for the same containment
+    /// check used by `resolve_path`.
+    pub fn resolve_destination_path<P: AsRef<Path>>(
+        &self,
+        rel_path: P,
+    ) -> Result<PathBuf, WorkspaceError> {
+        let rel = rel_path.as_ref();
+        if rel.is_absolute() || rel.to_string_lossy().as_bytes().get(1) == Some(&b':') {
+            return Err(WorkspaceError::Traversal(format!(
+                "absolute path not allowed: {}",
+                rel.display()
+            )));
+        }
+        let mut components = Vec::new();
+        for component in rel.components() {
+            match component {
+                Component::ParentDir => {
+                    if components.pop().is_none() {
+                        return Err(WorkspaceError::Traversal(rel.display().to_string()));
+                    }
+                }
+                Component::Normal(component) => components.push(component.to_owned()),
+                Component::CurDir => {}
+                Component::RootDir | Component::Prefix(_) => {
+                    return Err(WorkspaceError::Traversal(rel.display().to_string()))
+                }
+            }
+        }
+        let mut candidate = self.root.clone();
+        for component in &components {
+            candidate.push(component);
+        }
+        let mut ancestor = self.root.clone();
+        for component in &components {
+            ancestor.push(component);
+            if fs::symlink_metadata(&ancestor).is_ok() {
+                let resolved = fs::canonicalize(&ancestor).map_err(|error| {
+                    if error.kind() == io::ErrorKind::NotFound {
+                        WorkspaceError::NotFound(ancestor.display().to_string())
+                    } else {
+                        WorkspaceError::Io(error)
+                    }
+                })?;
+                if !resolved.starts_with(&self.root) {
+                    return Err(WorkspaceError::SymlinkEscape(format!(
+                        "{} resolves outside workspace",
+                        ancestor.display()
+                    )));
+                }
+            }
+        }
+        Ok(candidate)
+    }
+
     pub fn read_file<P: AsRef<Path>>(&self, rel_path: P) -> Result<Vec<u8>, WorkspaceError> {
         let resolved = self.resolve_path(rel_path)?;
         if !resolved.is_file() {
@@ -244,7 +300,7 @@ impl Workspace {
         destination_absent: bool,
     ) -> Result<(), WorkspaceError> {
         let source = self.resolve_path(source)?;
-        let destination = self.resolve_path(destination)?;
+        let destination = self.resolve_destination_path(destination)?;
         self.ensure_file_size(&source)?;
         let current = fs::read(&source)?;
         let actual = sha256(&current);
@@ -255,9 +311,14 @@ impl Workspace {
             });
         }
         if destination_absent && destination.exists() {
-            return Err(WorkspaceError::AlreadyExists(
-                destination.display().to_string(),
-            ));
+            let same_source = fs::canonicalize(&destination)
+                .map(|path| path == source)
+                .unwrap_or(false);
+            if !same_source {
+                return Err(WorkspaceError::AlreadyExists(
+                    destination.display().to_string(),
+                ));
+            }
         }
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;

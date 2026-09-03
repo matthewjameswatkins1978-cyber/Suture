@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 pub const PROTOCOL_VERSION: &str = "1.1.0";
 pub const MAX_REQUEST_BYTES: usize = 1_048_576;
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_TRANSACTION_REQUESTS: usize = 256;
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(
@@ -281,7 +282,12 @@ impl FailureReason {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
-#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+#[serde(
+    tag = "type",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum Cardinality {
     #[default]
     ExactlyOne,
@@ -291,6 +297,7 @@ pub enum Cardinality {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ByteEdit {
     pub offset: usize,
     pub delete_len: usize,
@@ -298,6 +305,7 @@ pub struct ByteEdit {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct MutationPlan {
     pub version: String,
     pub file_path: String,
@@ -308,13 +316,14 @@ pub struct MutationPlan {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ByteRange {
     pub start: usize,
     pub end: usize,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum StructuralValidation {
     #[default]
     NotApplicable,
@@ -324,6 +333,7 @@ pub enum StructuralValidation {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PreservationFacts {
     pub unrelated_bytes_changed: bool,
     pub line_endings_changed: bool,
@@ -336,6 +346,7 @@ pub struct PreservationFacts {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct CommitGuarantee {
     pub mode: String,
     pub content_replacement: String,
@@ -425,6 +436,14 @@ mod tests {
     fn unknown_request_fields_are_rejected() {
         let json = r#"{"version":"0.1.0","file_path":"a","expected_pre_hash":null,"operation":{"type":"text","bogus":1}}"#;
         assert!(serde_json::from_str::<Request>(json).is_err());
+    }
+
+    #[test]
+    fn unknown_nested_request_fields_are_rejected() {
+        let cardinality = r#"{"type":"exactly_one","future":true}"#;
+        assert!(serde_json::from_str::<Cardinality>(cardinality).is_err());
+        let namespace = r#"{"type":"native","future":true}"#;
+        assert!(serde_json::from_str::<PathNamespace>(namespace).is_err());
     }
     #[test]
     fn schema_generation_runs() {

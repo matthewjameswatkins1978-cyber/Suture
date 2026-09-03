@@ -74,7 +74,7 @@ pub fn plan(
             details: "pattern provider requires UTF-8".into(),
         })
     })?;
-    let matches: Vec<_> = re.find_iter(text).take(1025).collect();
+    let matches: Vec<_> = re.captures_iter(text).take(1025).collect();
     if matches.len() > 1024 {
         return Err(PatternError::Refused(RefusalReason::EffectBudgetExceeded {
             dimension: "pattern_matches".into(),
@@ -87,15 +87,22 @@ pub fn plan(
     }
     enforce_cardinality(matches.len(), cardinality)?;
     let replacement = match op {
-        PatternOperation::Replace { replacement, .. } => replacement.as_bytes(),
-        PatternOperation::Delete { .. } | PatternOperation::EnsureAbsent { .. } => b"",
+        PatternOperation::Replace { replacement, .. } => Some(replacement.as_str()),
+        PatternOperation::Delete { .. } | PatternOperation::EnsureAbsent { .. } => None,
     };
     Ok(matches
         .into_iter()
         .map(|m| ByteEdit {
-            start: m.start(),
-            end: m.end(),
-            replacement: replacement.to_vec(),
+            start: m
+                .get(0)
+                .expect("regex capture always has group zero")
+                .start(),
+            end: m.get(0).expect("regex capture always has group zero").end(),
+            replacement: replacement.map_or_else(Vec::new, |template| {
+                let mut expanded = String::new();
+                m.expand(template, &mut expanded);
+                expanded.into_bytes()
+            }),
         })
         .collect())
 }
@@ -119,4 +126,25 @@ fn enforce_cardinality(actual: usize, cardinality: &Cardinality) -> Result<(), P
             actual,
         }
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::apply_byte_edits;
+
+    #[test]
+    fn replacement_expands_captures() {
+        let content = b"name=old\n";
+        let edits = plan(
+            content,
+            &PatternOperation::Replace {
+                pattern: r"name=(\w+)".into(),
+                replacement: "value=$1".into(),
+            },
+            &Cardinality::ExactlyOne,
+        )
+        .unwrap();
+        assert_eq!(apply_byte_edits(content, &edits).unwrap(), b"value=old\n");
+    }
 }

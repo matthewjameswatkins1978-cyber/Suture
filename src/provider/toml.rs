@@ -220,7 +220,7 @@ fn apply_toml_operation(
         }
         TomlOperation::EnsurePresent { path, value } => {
             let segments = parse_toml_path(path)?;
-            set_toml_path(doc.as_table_mut(), &segments, value)?;
+            ensure_toml_path(doc.as_table_mut(), &segments, value)?;
         }
         TomlOperation::EnsureAbsent { path } | TomlOperation::Unset { path } => {
             let segments = parse_toml_path(path)?;
@@ -338,6 +338,92 @@ fn set_toml_path(
         }
     }
     Ok(())
+}
+
+fn ensure_toml_path(
+    table: &mut toml_edit::Table,
+    segments: &[TomlPathSegment],
+    value: &TomlValueWrapper,
+) -> Result<(), TomlProviderError> {
+    if segments.is_empty() {
+        return Err(TomlProviderError::Refused(RefusalReason::MissingTarget {
+            target: "Cannot ensure the TOML root is present".into(),
+        }));
+    }
+    let (head, tail) = segments.split_first().unwrap();
+    match head {
+        TomlPathSegment::Key(key) if tail.is_empty() => {
+            if table.contains_key(key) {
+                set_toml_path(table, segments, value)
+            } else {
+                table.insert(key, value.to_toml_item());
+                Ok(())
+            }
+        }
+        TomlPathSegment::Key(key) => {
+            let item = table.get_mut(key).ok_or_else(|| {
+                TomlProviderError::Refused(RefusalReason::MissingTarget {
+                    target: format!("parent key '{}' not found", key),
+                })
+            })?;
+            match item {
+                Item::Table(sub_table) => ensure_toml_path(sub_table, tail, value),
+                Item::Value(Value::InlineTable(inline_table)) => {
+                    ensure_toml_inline_path(inline_table, tail, value)
+                }
+                _ => Err(TomlProviderError::Refused(RefusalReason::MissingTarget {
+                    target: format!("parent key '{}' is not a table", key),
+                })),
+            }
+        }
+        TomlPathSegment::Index(idx) => {
+            Err(TomlProviderError::Refused(RefusalReason::MissingTarget {
+                target: format!("Cannot ensure TOML array index {} directly on table", idx),
+            }))
+        }
+    }
+}
+
+fn ensure_toml_inline_path(
+    table: &mut toml_edit::InlineTable,
+    segments: &[TomlPathSegment],
+    value: &TomlValueWrapper,
+) -> Result<(), TomlProviderError> {
+    if segments.is_empty() {
+        return Err(TomlProviderError::Refused(RefusalReason::MissingTarget {
+            target: "Cannot ensure an empty TOML inline path".into(),
+        }));
+    }
+    let (head, tail) = segments.split_first().unwrap();
+    match head {
+        TomlPathSegment::Key(key) if tail.is_empty() => {
+            if table.contains_key(key) {
+                set_toml_inline_path(table, segments, value)
+            } else {
+                table.insert(key, value.to_toml_value());
+                Ok(())
+            }
+        }
+        TomlPathSegment::Key(key) => {
+            let item = table.get_mut(key).ok_or_else(|| {
+                TomlProviderError::Refused(RefusalReason::MissingTarget {
+                    target: format!("parent key '{}' not found in inline table", key),
+                })
+            })?;
+            if let Value::InlineTable(inline_table) = item {
+                ensure_toml_inline_path(inline_table, tail, value)
+            } else {
+                Err(TomlProviderError::Refused(RefusalReason::MissingTarget {
+                    target: format!("parent key '{}' is not an inline table", key),
+                }))
+            }
+        }
+        TomlPathSegment::Index(idx) => {
+            Err(TomlProviderError::Refused(RefusalReason::MissingTarget {
+                target: format!("Cannot ensure TOML array index {}", idx),
+            }))
+        }
+    }
 }
 
 fn set_toml_inline_path(

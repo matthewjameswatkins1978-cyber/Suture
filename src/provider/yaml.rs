@@ -98,6 +98,25 @@ pub fn plan(
         if matches!(op, YamlOperation::EnsureAbsent { .. }) {
             return Ok(Vec::new());
         }
+        if let YamlOperation::EnsurePresent { value, .. } = op {
+            let encoded = scalar(value)?;
+            let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+            let prefix = if text.is_empty() || text.ends_with('\n') || text.ends_with('\r') {
+                ""
+            } else {
+                newline
+            };
+            let suffix = if text.ends_with('\n') || text.ends_with('\r') {
+                newline
+            } else {
+                ""
+            };
+            return Ok(vec![ByteEdit {
+                start: text.len(),
+                end: text.len(),
+                replacement: format!("{prefix}{path}: {encoded}{suffix}").into_bytes(),
+            }]);
+        }
         return Err(YamlError::Refused(RefusalReason::MissingTarget {
             target: path.into(),
         }));
