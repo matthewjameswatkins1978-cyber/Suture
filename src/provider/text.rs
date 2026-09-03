@@ -73,13 +73,9 @@ impl TextProvider {
                 false,
                 false,
             ),
-            TextOperation::Delete { target } => (
-                target.as_bytes(),
-                &[][..],
-                Placement::Replace,
-                false,
-                false,
-            ),
+            TextOperation::Delete { target } => {
+                (target.as_bytes(), &[][..], Placement::Replace, false, false)
+            }
             TextOperation::InsertBefore { target, content } => (
                 target.as_bytes(),
                 content.as_bytes(),
@@ -94,13 +90,9 @@ impl TextProvider {
                 false,
                 false,
             ),
-            TextOperation::EnsureAbsent { target } | TextOperation::Unset { target } => (
-                target.as_bytes(),
-                &[][..],
-                Placement::Replace,
-                true,
-                false,
-            ),
+            TextOperation::EnsureAbsent { target } | TextOperation::Unset { target } => {
+                (target.as_bytes(), &[][..], Placement::Replace, true, false)
+            }
             TextOperation::Set {
                 target,
                 replacement,
@@ -225,26 +217,30 @@ fn enforce_cardinality(
     }
 
     let actual = matches.len();
-    let valid = match cardinality {
-        Cardinality::ExactlyOne => actual == 1,
-        Cardinality::Exactly(expected) => actual == *expected,
-        Cardinality::All => actual > 0,
-    };
-    if valid {
-        return Ok(());
+    match cardinality {
+        Cardinality::ExactlyOne if actual == 1 => Ok(()),
+        Cardinality::Exactly(expected) if actual == *expected => Ok(()),
+        Cardinality::All if actual > 0 => Ok(()),
+        Cardinality::ExactlyOne if actual == 0
+        | Cardinality::Exactly(_) if actual == 0
+        | Cardinality::All => Err(missing_target(content, target)),
+        Cardinality::Exactly(expected) if actual < *expected => {
+            Err(missing_target(content, target))
+        }
+        Cardinality::ExactlyOne | Cardinality::Exactly(_) => {
+            Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
+                target: String::from_utf8_lossy(target).into_owned(),
+                count: actual,
+                candidates: candidate_diagnostics(content, target, matches),
+            }))
+        }
     }
+}
 
-    if actual == 0 {
-        return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
-            target: diagnose_near_miss(content, target),
-        }));
-    }
-
-    Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
-        target: String::from_utf8_lossy(target).into_owned(),
-        count: actual,
-        candidates: candidate_diagnostics(content, target, matches),
-    }))
+fn missing_target(content: &[u8], target: &[u8]) -> TextProviderError {
+    TextProviderError::Refused(RefusalReason::MissingTarget {
+        target: diagnose_near_miss(content, target),
+    })
 }
 
 fn find_matches(content: &[u8], target: &[u8]) -> Vec<usize> {
@@ -474,6 +470,22 @@ mod tests {
     }
 
     #[test]
+    fn exactly_n_shortfall_remains_a_missing_target_refusal() {
+        let content = b"foo foo";
+        let op = TextOperation::Replace {
+            target: "foo".into(),
+            replacement: "bar".into(),
+        };
+        let result = TextProvider::plan(content, &op, &Cardinality::Exactly(3));
+        assert!(matches!(
+            result,
+            Err(TextProviderError::Refused(
+                RefusalReason::MissingTarget { .. }
+            ))
+        ));
+    }
+
+    #[test]
     fn test_near_miss_nbsp() {
         let content = "hello\u{00A0}world".as_bytes();
         let op = TextOperation::Replace {
@@ -526,7 +538,10 @@ mod tests {
             replacement: "b".into(),
         };
         let edits = TextProvider::plan(content, &op, &Cardinality::All).unwrap();
-        assert_eq!(edits.iter().map(|edit| edit.start).collect::<Vec<_>>(), [0, 2]);
+        assert_eq!(
+            edits.iter().map(|edit| edit.start).collect::<Vec<_>>(),
+            [0, 2]
+        );
         assert_eq!(apply_byte_edits(content, &edits).unwrap(), b"bb");
     }
 
