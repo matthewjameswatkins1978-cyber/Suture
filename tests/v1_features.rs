@@ -15,6 +15,76 @@ use suture::provider::yaml::YamlOperation;
 use suture::workspace::Workspace;
 use tempfile::TempDir;
 
+#[test]
+fn canonical_examples_are_current_protocol_values() {
+    for example in suture::metadata::examples(None) {
+        if example.request.get("requests").is_some() {
+            let transaction: TransactionRequest = serde_json::from_value(example.request).unwrap();
+            assert_eq!(transaction.version, PROTOCOL_VERSION, "{}", example.topic);
+        } else {
+            let request: Request = serde_json::from_value(example.request).unwrap();
+            assert_eq!(request.version, PROTOCOL_VERSION, "{}", example.topic);
+        }
+    }
+}
+
+#[test]
+fn every_public_reason_code_is_explainable() {
+    let manifest = suture::metadata::capabilities();
+    for reason in manifest.reason_codes {
+        assert_eq!(
+            suture::metadata::reason(reason.code).unwrap().code,
+            reason.code
+        );
+    }
+}
+
+#[test]
+fn every_provider_operation_is_in_canonical_operation_metadata() {
+    let operations: std::collections::HashSet<_> = suture::metadata::operation_metadata()
+        .into_iter()
+        .map(|operation| operation.name)
+        .collect();
+    for provider in suture::metadata::provider_metadata() {
+        for operation in provider.operations {
+            assert!(
+                operations.contains(operation),
+                "{}.{operation}",
+                provider.name
+            );
+        }
+    }
+}
+
+#[test]
+fn suggestion_is_schema_valid_and_refusal_recovery_is_machine_readable() {
+    let suggestion = suture::metadata::suggest(
+        "config.json",
+        Some("set-value"),
+        Some("$.name"),
+        "safe",
+        None,
+    );
+    let suggested_request: Request =
+        serde_json::from_value(suggestion.request_template.unwrap()).unwrap();
+    assert_eq!(suggested_request.version, PROTOCOL_VERSION);
+    let temp = TempDir::new().unwrap();
+    let refusal = execute_request(
+        &Workspace::new(temp.path()).unwrap(),
+        &request(
+            "missing.txt",
+            OperationPayload::Text(TextOperation::Replace {
+                target: "x".into(),
+                replacement: "y".into(),
+            }),
+        ),
+        true,
+    );
+    let recovery = suture::metadata::refusal_recovery(&refusal);
+    assert_eq!(recovery["reason_code"], "TARGET_NOT_FOUND");
+    assert!(recovery["suggestions"].as_array().unwrap().len() == 1);
+}
+
 fn request(path: &str, operation: OperationPayload) -> Request {
     Request {
         version: PROTOCOL_VERSION.into(),
@@ -62,8 +132,21 @@ fn effect_budget_refuses_before_write() {
     r.budget.max_changed_bytes = Some(2);
     let c = execute_request(&w, &r, false);
     assert_eq!(c.outcome, Outcome::Refused);
+    assert_eq!(c.reason_code.as_deref(), Some("EFFECT_BUDGET_EXCEEDED"));
     assert!(!c.effect.passed);
     assert_eq!(w.read_file("x.txt").unwrap(), b"one two\n");
+}
+
+#[test]
+fn capability_and_schema_fingerprints_are_deterministic_and_scoped() {
+    let first = suture::metadata::capabilities();
+    let second = suture::metadata::capabilities();
+    assert_eq!(first.capability_set_id, second.capability_set_id);
+    let view = suture::metadata::capability_view(Some("json.set"));
+    assert_eq!(view["selected_operation"]["name"], "set");
+    let schema = suture::metadata::schema(Some("json"));
+    assert_eq!(schema["protocol_version"], PROTOCOL_VERSION);
+    assert!(schema["schema_id"].as_str().is_some());
 }
 
 #[test]
@@ -300,4 +383,35 @@ fn durable_region_guard_survives_unrelated_edit() {
     let c = execute_request(&w, &r, false);
     assert_eq!(c.outcome, Outcome::Applied);
     assert_eq!(w.read_file("x.txt").unwrap(), b"unrelated\nchanged\n");
+}
+
+#[test]
+fn single_file_transaction_resolves_operations_on_coherent_candidate() {
+    let t = TempDir::new().unwrap();
+    let w = Workspace::new(t.path()).unwrap();
+    std::fs::write(t.path().join("x.txt"), b"one two\n").unwrap();
+    let tx = TransactionRequest {
+        version: PROTOCOL_VERSION.into(),
+        transaction_id: "tx-single-file".into(),
+        requests: vec![
+            request(
+                "x.txt",
+                OperationPayload::Text(TextOperation::Replace {
+                    target: "one".into(),
+                    replacement: "first".into(),
+                }),
+            ),
+            request(
+                "x.txt",
+                OperationPayload::Text(TextOperation::Replace {
+                    target: "two".into(),
+                    replacement: "second".into(),
+                }),
+            ),
+        ],
+        budget: EffectBudget::default(),
+    };
+    let c = suture::pipeline::execute_transaction(&w, &tx, false);
+    assert_eq!(c.outcome, Outcome::Applied);
+    assert_eq!(w.read_file("x.txt").unwrap(), b"first second\n");
 }

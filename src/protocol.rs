@@ -12,7 +12,7 @@ use crate::provider::yaml::YamlOperation;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "1.0.0";
+pub const PROTOCOL_VERSION: &str = "1.1.0";
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(
@@ -84,6 +84,7 @@ pub struct TransactionCertificate {
     pub transaction_guarantee: String,
     pub refusal_reason: Option<RefusalReason>,
     pub failure_reason: Option<FailureReason>,
+    pub reason_code: Option<String>,
 }
 
 /// A hard upper bound on the mutation's prepared effect. `None` means that
@@ -189,6 +190,32 @@ pub enum RefusalReason {
     },
 }
 
+impl RefusalReason {
+    /// Stable machine identifier used by certificates and `suture explain`.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::CardinalityMismatch { .. } => "CARDINALITY_MISMATCH",
+            Self::CardinalityAmbiguous { .. } | Self::DuplicateTarget { .. } => "TARGET_AMBIGUOUS",
+            Self::StaleIdentity { .. } => "STALE_IDENTITY",
+            Self::WorkspaceTraversal { .. } => "WORKSPACE_ESCAPE",
+            Self::SymlinkEscape { .. } => "SYMLINK_ESCAPE",
+            Self::MissingTarget { .. } => "TARGET_NOT_FOUND",
+            Self::UnsupportedEncoding { .. } => "ENCODING_UNSUPPORTED",
+            Self::MalformedInput { .. } => "INVALID_INPUT",
+            Self::ProviderCapabilityMissing { .. } => "PROVIDER_UNSUPPORTED",
+            Self::PreservationUnavailable { .. } => "PRESERVATION_UNAVAILABLE",
+            Self::LossyOperationRequiresOptIn { .. } => "LOSSY_OPERATION_REQUIRES_OPT_IN",
+            Self::UnsupportedOperation { .. } => "OPERATION_UNSUPPORTED",
+            Self::UnsupportedProtocolVersion { .. } => "PROTOCOL_UNSUPPORTED",
+            Self::Custom { .. } => "REFUSED",
+            Self::EffectBudgetExceeded { .. } => "EFFECT_BUDGET_EXCEEDED",
+            Self::GeneratedFileRequiresOptIn { .. } => "GENERATED_FILE_REQUIRES_OPT_IN",
+            Self::BinaryInput => "BINARY_INPUT",
+            Self::DestinationExists { .. } => "DESTINATION_EXISTS",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
@@ -226,6 +253,19 @@ pub enum FailureReason {
     Custom {
         message: String,
     },
+}
+
+impl FailureReason {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::IoError { .. } => "IO_ERROR",
+            Self::ProviderError { .. } | Self::ParseError { .. } => "INVALID_STRUCTURE",
+            Self::InternalInvariant { .. } => "INTERNAL_INVARIANT",
+            Self::CommitFailure { .. } | Self::WriteError { .. } => "COMMIT_FAILED",
+            Self::PostCommitVerificationFailure { .. } => "POST_COMMIT_VERIFICATION_FAILED",
+            Self::Custom { .. } => "FAILED",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
@@ -314,6 +354,7 @@ pub struct Certificate {
     pub commit: CommitGuarantee,
     pub refusal_reason: Option<RefusalReason>,
     pub failure_reason: Option<FailureReason>,
+    pub reason_code: Option<String>,
     pub diagnostics: Vec<String>,
     pub budget: EffectBudget,
     pub effect: EffectUsage,
