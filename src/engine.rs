@@ -20,6 +20,9 @@ pub enum EngineError {
         start2: usize,
         end2: usize,
     },
+
+    #[error("Edited output size exceeds addressable memory")]
+    OutputSizeOverflow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,8 +40,7 @@ pub fn compute_sha256(bytes: &[u8]) -> String {
 }
 
 pub fn apply_byte_edits(original: &[u8], edits: &[ByteEdit]) -> Result<Vec<u8>, EngineError> {
-    // Validate edits: must be sorted and non-overlapping, and within bounds.
-    for (i, edit) in edits.iter().enumerate() {
+    for (index, edit) in edits.iter().enumerate() {
         if edit.start > edit.end || edit.end > original.len() {
             return Err(EngineError::OutOfBounds {
                 start: edit.start,
@@ -46,15 +48,13 @@ pub fn apply_byte_edits(original: &[u8], edits: &[ByteEdit]) -> Result<Vec<u8>, 
                 len: original.len(),
             });
         }
-        if i > 0 {
-            let prev = &edits[i - 1];
-            // Since edits must be sorted and non-overlapping, prev.end <= edit.start.
-            // If prev.end > edit.start, they overlap or are unsorted.
-            if prev.end > edit.start {
+
+        if let Some(previous) = index.checked_sub(1).map(|i| &edits[i]) {
+            if previous.end > edit.start {
                 return Err(EngineError::OverlappingOrUnsorted {
-                    index: i,
-                    start1: prev.start,
-                    end1: prev.end,
+                    index,
+                    start1: previous.start,
+                    end1: previous.end,
                     start2: edit.start,
                     end2: edit.end,
                 });
@@ -62,19 +62,23 @@ pub fn apply_byte_edits(original: &[u8], edits: &[ByteEdit]) -> Result<Vec<u8>, 
         }
     }
 
-    let mut result = Vec::new();
+    let final_len = edits.iter().try_fold(original.len(), |len, edit| {
+        len.checked_sub(edit.end - edit.start)
+            .and_then(|len| len.checked_add(edit.replacement.len()))
+            .ok_or(EngineError::OutputSizeOverflow)
+    })?;
+
+    let mut result = Vec::with_capacity(final_len);
     let mut last_idx = 0;
 
     for edit in edits {
-        // Append unchanged bytes before the edit
         result.extend_from_slice(&original[last_idx..edit.start]);
-        // Append replacement bytes
         result.extend_from_slice(&edit.replacement);
         last_idx = edit.end;
     }
 
-    // Append remaining unchanged bytes
-    result.extend_from_slice(&original[last_idx..original.len()]);
+    result.extend_from_slice(&original[last_idx..]);
+    debug_assert_eq!(result.len(), final_len);
 
     Ok(result)
 }
@@ -180,6 +184,19 @@ mod tests {
             res,
             Err(EngineError::OverlappingOrUnsorted { .. })
         ));
+    }
+
+    #[test]
+    fn apply_byte_edits_uses_exact_final_size() {
+        let original = b"abcdef";
+        let edits = [ByteEdit {
+            start: 1,
+            end: 5,
+            replacement: b"123456".to_vec(),
+        }];
+        let result = apply_byte_edits(original, &edits).unwrap();
+        assert_eq!(result, b"a123456f");
+        assert_eq!(result.len(), 8);
     }
 
     #[test]
