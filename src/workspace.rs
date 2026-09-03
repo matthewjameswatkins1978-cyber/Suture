@@ -85,24 +85,23 @@ impl Workspace {
         }
         let native = PathNormalizer::to_native_path(path, namespace);
         if native.is_absolute() {
-            let resolved =
-                if native.exists() {
-                    std::fs::canonicalize(&native)?
-                } else {
-                    let parent = native.parent().ok_or_else(|| {
-                        WorkspaceError::UnmappablePath(native.display().to_string())
-                    })?;
-                    let parent = std::fs::canonicalize(parent).map_err(|error| {
-                        if error.kind() == io::ErrorKind::NotFound {
-                            WorkspaceError::NotFound(parent.display().to_string())
-                        } else {
-                            WorkspaceError::Io(error)
-                        }
-                    })?;
-                    parent.join(native.file_name().ok_or_else(|| {
-                        WorkspaceError::UnmappablePath(native.display().to_string())
-                    })?)
-                };
+            let resolved = if native.exists() {
+                std::fs::canonicalize(&native)?
+            } else {
+                let parent = native.parent().ok_or_else(|| {
+                    WorkspaceError::UnmappablePath(native.display().to_string())
+                })?;
+                let parent = std::fs::canonicalize(parent).map_err(|error| {
+                    if error.kind() == io::ErrorKind::NotFound {
+                        WorkspaceError::NotFound(parent.display().to_string())
+                    } else {
+                        WorkspaceError::Io(error)
+                    }
+                })?;
+                parent.join(native.file_name().ok_or_else(|| {
+                    WorkspaceError::UnmappablePath(native.display().to_string())
+                })?)
+            };
             let relative = resolved
                 .strip_prefix(&self.root)
                 .map_err(|_| WorkspaceError::Traversal(path.into()))?;
@@ -376,14 +375,14 @@ impl Workspace {
         Ok(())
     }
 
-    fn ensure_windows_replaceable(&self, path: &Path) -> Result<(), WorkspaceError> {
+    fn ensure_windows_replaceable(&self, _path: &Path) -> Result<(), WorkspaceError> {
         #[cfg(target_os = "windows")]
-        if path.exists() && fs::metadata(path)?.permissions().readonly() {
+        if _path.exists() && fs::metadata(_path)?.permissions().readonly() {
             return Err(WorkspaceError::Io(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!(
                     "read-only destination cannot be atomically replaced on Windows: {}",
-                    path.display()
+                    _path.display()
                 ),
             )));
         }
@@ -504,7 +503,9 @@ mod tests {
             Err(WorkspaceError::Io(ref error)) if error.kind() == io::ErrorKind::PermissionDenied
         ));
         assert_eq!(fs::read(&path).unwrap(), b"old");
-        assert!(!entries.iter().any(|name| name.starts_with(".readonly.txt.")));
+        assert!(!entries
+            .iter()
+            .any(|name| name.starts_with(".readonly.txt.")));
 
         let mut permissions = fs::metadata(&path).unwrap().permissions();
         permissions.set_readonly(false);
