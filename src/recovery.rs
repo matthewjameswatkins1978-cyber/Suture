@@ -38,15 +38,22 @@ pub fn write_journal(workspace: &Workspace, journal: &Journal) -> Result<(), Wor
 }
 
 pub fn remove_journal(workspace: &Workspace, transaction_id: &str) -> Result<(), WorkspaceError> {
-    let path = workspace
-        .root()
-        .join(".suture-recovery")
-        .join(format!("{}.json", safe_id(transaction_id)));
+    let dir = workspace.root().join(".suture-recovery");
+    let path = dir.join(format!("{}.json", safe_id(transaction_id)));
     match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.into()),
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
     }
+    remove_recovery_dir_if_empty(&dir);
+    Ok(())
+}
+
+fn remove_recovery_dir_if_empty(dir: &std::path::Path) {
+    // This is deliberately best-effort. A non-empty directory means another
+    // transaction or a manual-recovery journal still needs it; remove_dir then
+    // fails safely without disturbing that state.
+    let _ = fs::remove_dir(dir);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,6 +147,7 @@ pub fn recover_all(workspace: &Workspace) -> RecoveryReport {
             report.cleaned += 1;
         }
     }
+    remove_recovery_dir_if_empty(&dir);
     report
 }
 
@@ -208,7 +216,7 @@ mod tests {
         assert_eq!(report.completed, 1);
         assert_eq!(report.restored, 0);
         assert_eq!(workspace.read_file("x.txt").unwrap(), b"new");
-        assert!(!temp.path().join(".suture-recovery/completed.json").exists());
+        assert!(!temp.path().join(".suture-recovery").exists());
     }
 
     #[test]
@@ -221,9 +229,12 @@ mod tests {
             &workspace,
             "partial",
             vec![
-                entry("a.txt", b"old-a", b"new-a"),
-                entry("b.txt", b"old-b", b"new-b"),
-            ],
+                entry("a.txt", b"old-a", b"new-a")],
+        );
+        journal_for(
+            &workspace,
+            "partial-second",
+            vec![entry("b.txt", b"old-b", b"new-b")],
         );
 
         let report = recover_all(&workspace);
@@ -232,7 +243,7 @@ mod tests {
         assert_eq!(report.restored, 1);
         assert_eq!(workspace.read_file("a.txt").unwrap(), b"old-a");
         assert_eq!(workspace.read_file("b.txt").unwrap(), b"old-b");
-        assert!(!temp.path().join(".suture-recovery/partial.json").exists());
+        assert!(!temp.path().join(".suture-recovery").exists());
     }
 
     #[test]
@@ -249,5 +260,33 @@ mod tests {
         assert!(!report.manual.is_empty());
         assert_eq!(workspace.read_file("x.txt").unwrap(), b"unexpected");
         assert!(temp.path().join(".suture-recovery/changed.json").exists());
+        assert!(temp.path().join(".suture-recovery").exists());
+    }
+
+    #[test]
+    fn remove_journal_removes_the_directory_when_it_becomes_empty() {
+        let temp = TempDir::new().unwrap();
+        let workspace = Workspace::new(temp.path()).unwrap();
+        workspace.write_file_atomic("x.txt", b"old").unwrap();
+        journal_for(&workspace, "finished", vec![entry("x.txt", b"old", b"new")]);
+
+        remove_journal(&workspace, "finished").unwrap();
+
+        assert!(!temp.path().join(".suture-recovery").exists());
+    }
+
+    #[test]
+    fn remove_journal_keeps_directory_when_another_journal_remains() {
+        let temp = TempDir::new().unwrap();
+        let workspace = Workspace::new(temp.path()).unwrap();
+        workspace.write_file_atomic("x.txt", b"old").unwrap();
+        let recovery_entry = entry("x.txt", b"old", b"new");
+        journal_for(&workspace, "one", vec![recovery_entry.clone()]);
+        journal_for(&workspace, "two", vec![recovery_entry]);
+
+        remove_journal(&workspace, "one").unwrap();
+
+        assert!(temp.path().join(".suture-recovery").exists());
+        assert!(temp.path().join(".suture-recovery/two.json").exists());
     }
 }
