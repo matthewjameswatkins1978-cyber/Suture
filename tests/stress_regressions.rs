@@ -1,3 +1,4 @@
+#[cfg(target_os = "windows")]
 use suture::engine::compute_sha256;
 use suture::pipeline::{execute_request, execute_transaction};
 use suture::protocol::{
