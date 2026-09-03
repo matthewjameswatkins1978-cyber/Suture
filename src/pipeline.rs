@@ -475,6 +475,7 @@ pub fn execute_transaction(
                 transaction_guarantee: "not_committed".into(),
                 refusal_reason: certificate.refusal_reason,
                 failure_reason: certificate.failure_reason,
+                reason_code: certificate.reason_code,
             };
         }
         if certificate.outcome == Outcome::Failed {
@@ -487,6 +488,7 @@ pub fn execute_transaction(
                 transaction_guarantee: "not_committed".into(),
                 refusal_reason: None,
                 failure_reason: certificate.failure_reason,
+                reason_code: certificate.reason_code,
             };
         }
         let path = PathNormalizer::normalize(&request.file_path, &request.namespace);
@@ -560,6 +562,7 @@ pub fn execute_transaction(
             transaction_guarantee: "dry_run".into(),
             refusal_reason: None,
             failure_reason: None,
+            reason_code: None,
         };
     }
     let journal = Journal {
@@ -617,6 +620,7 @@ pub fn execute_transaction(
                     failure_reason: Some(FailureReason::CommitFailure {
                         message: error.to_string(),
                     }),
+                    reason_code: Some("COMMIT_FAILED".into()),
                 };
             }
         }
@@ -635,6 +639,7 @@ pub fn execute_transaction(
         transaction_guarantee: "transactional_with_rollback".into(),
         refusal_reason: None,
         failure_reason: None,
+        reason_code: None,
     }
 }
 
@@ -762,6 +767,7 @@ fn execute_single_file_transaction(
             transaction_guarantee: "dry_run".into(),
             refusal_reason: None,
             failure_reason: None,
+            reason_code: None,
         };
     }
     if original == current {
@@ -774,6 +780,7 @@ fn execute_single_file_transaction(
             transaction_guarantee: "transactional_with_rollback".into(),
             refusal_reason: None,
             failure_reason: None,
+            reason_code: None,
         };
     }
     let journal = Journal {
@@ -811,6 +818,7 @@ fn execute_single_file_transaction(
                 transaction_guarantee: "transactional_with_rollback".into(),
                 refusal_reason: None,
                 failure_reason: None,
+                reason_code: None,
             }
         }
         Err(error) => TransactionCertificate {
@@ -824,6 +832,7 @@ fn execute_single_file_transaction(
             failure_reason: Some(FailureReason::CommitFailure {
                 message: error.to_string(),
             }),
+            reason_code: Some("COMMIT_FAILED".into()),
         },
     }
 }
@@ -832,6 +841,7 @@ fn transaction_refusal(
     transaction: &TransactionRequest,
     reason: RefusalReason,
 ) -> TransactionCertificate {
+    let reason_code = reason.code().into();
     TransactionCertificate {
         protocol_version: transaction.version.clone(),
         transaction_id: transaction.transaction_id.clone(),
@@ -841,12 +851,14 @@ fn transaction_refusal(
         transaction_guarantee: "not_committed".into(),
         refusal_reason: Some(reason),
         failure_reason: None,
+        reason_code: Some(reason_code),
     }
 }
 fn transaction_failure(
     transaction: &TransactionRequest,
     reason: FailureReason,
 ) -> TransactionCertificate {
+    let reason_code = reason.code().into();
     TransactionCertificate {
         protocol_version: transaction.version.clone(),
         transaction_id: transaction.transaction_id.clone(),
@@ -856,6 +868,7 @@ fn transaction_failure(
         transaction_guarantee: "not_committed".into(),
         refusal_reason: None,
         failure_reason: Some(reason),
+        reason_code: Some(reason_code),
     }
 }
 
@@ -1399,6 +1412,10 @@ fn refusal_with_effect(
         effect,
     );
     certificate.refusal_reason = Some(reason);
+    certificate.reason_code = certificate
+        .refusal_reason
+        .as_ref()
+        .map(|value| value.code().into());
     certificate
 }
 fn failure(
@@ -1423,6 +1440,7 @@ fn failure(
         false,
         zero_effect(),
     );
+    c.reason_code = Some(reason.code().into());
     c.failure_reason = Some(reason);
     c
 }
@@ -1514,6 +1532,7 @@ fn completed(
         commit,
         refusal_reason: None,
         failure_reason: None,
+        reason_code: None,
         diagnostics: Vec::new(),
         budget: r.budget.clone(),
         effect,
@@ -1615,6 +1634,7 @@ trait WithReason {
 }
 impl WithReason for Certificate {
     fn with_reason(mut self, r: RefusalReason) -> Self {
+        self.reason_code = Some(r.code().into());
         self.refusal_reason = Some(r);
         self
     }

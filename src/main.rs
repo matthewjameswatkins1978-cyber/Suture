@@ -9,16 +9,83 @@ use suture::{
     pipeline::execute_request,
     protocol::{
         Certificate, CommitGuarantee, EffectBudget, EffectUsage, FailureReason, Outcome,
-        PreservationFacts, RefusalReason, Request, StructuralValidation, TransactionCertificate,
-        TransactionRequest, PROTOCOL_VERSION,
+        PreservationFacts, RefusalReason, Request, StructuralValidation, TransactionRequest,
+        PROTOCOL_VERSION,
     },
     workspace::Workspace,
 };
 
 fn help() {
-    println!("suture {PROTOCOL_VERSION} - deterministic, source-preserving file mutation\n\nUSAGE:\n  suture mutate [--request FILE]\n  suture preview [--request FILE]\n  suture capabilities\n  suture inspect PATH\n  suture transact [--request FILE]\n  suture transaction-preview [--request FILE]\n  suture recover\n  suture schema\n  suture doctor\n  suture --version");
+    println!("suture {PROTOCOL_VERSION} - deterministic mutation of existing workspace state\n\nSuture changes exactly the state a request authorizes, refuses ambiguity, and returns a certificate. It is not Git, a build/test runner, a formatter, a shell, or an online service.\n\nCOMMANDS");
+    for (name, description) in suture::metadata::commands() {
+        println!("  {name:<14} {description}");
+    }
+    println!("\nOUTCOMES\n  APPLIED       verified candidate committed\n  NO_CHANGE     requested desired state already held\n  REFUSED       no bytes written; request or evidence was unsafe/ambiguous\n  FAILED        execution or verification failed; inspect recovery state\n\nSAFETY\n  Providers propose edits; Core validates identity, cardinality, preservation and budgets before writing.\n  Start with: suture capabilities, suture examples, suture schema, suture suggest PATH\n  Help for one command: suture help <command>\n  Search help: suture help --find <term>");
+}
+
+fn print_examples(topic: Option<&str>) {
+    let examples = suture::metadata::examples(topic);
+    if examples.is_empty() {
+        eprintln!("no example topic matched");
+        std::process::exit(1);
+    }
+    println!("{}", serde_json::to_string_pretty(&examples).unwrap());
+}
+
+fn print_explain(code: &str, json_output: bool) {
+    let Some(reason) = suture::metadata::reason(code) else {
+        eprintln!("unknown reason code: {code}");
+        std::process::exit(1);
+    };
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&reason).unwrap());
+    } else {
+        println!(
+            "{} — {}\nWhy: {}\nRecovery: {}\nRetry unchanged: {}\nCommands: {}",
+            reason.code,
+            reason.meaning,
+            reason.why_refused,
+            reason.recovery_category,
+            reason.retry_unchanged,
+            reason.relevant_commands.join(", ")
+        );
+    }
+}
+
+fn read_json_argument(args: &[String]) -> String {
+    if let Some(index) = args.iter().position(|arg| arg == "--request") {
+        if let Some(path) = args.get(index + 1) {
+            return match fs::read_to_string(path) {
+                Ok(value) => value,
+                Err(error) => {
+                    eprintln!("request read failed: {error}");
+                    std::process::exit(3);
+                }
+            };
+        }
+    }
+    let mut input = String::new();
+    match io::stdin().read_to_string(&mut input) {
+        Ok(_) => input,
+        Err(error) => {
+            eprintln!("request read failed: {error}");
+            std::process::exit(3);
+        }
+    }
+}
+
+fn bool_flag(args: &[String], flag: &str) -> bool {
+    args.iter().any(|arg| arg == flag)
+}
+
+fn option_value(args: &[String], flag: &str) -> Option<String> {
+    args.iter()
+        .position(|arg| arg == flag)
+        .and_then(|index| args.get(index + 1))
+        .cloned()
 }
 fn empty_cert(reason: RefusalReason) -> Certificate {
+    let reason_code = reason.code().into();
     Certificate {
         protocol_version: PROTOCOL_VERSION.into(),
         request_id: String::new(),
@@ -39,6 +106,7 @@ fn empty_cert(reason: RefusalReason) -> Certificate {
         commit: CommitGuarantee::default(),
         refusal_reason: Some(reason),
         failure_reason: None,
+        reason_code: Some(reason_code),
         diagnostics: Vec::new(),
         budget: EffectBudget::default(),
         effect: EffectUsage {
@@ -183,10 +251,92 @@ fn main() {
             );
         }
         "capabilities" => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&suture::capabilities::current()).unwrap()
-            );
+            let selector = args
+                .iter()
+                .skip(2)
+                .find(|arg| !arg.starts_with('-'))
+                .map(String::as_str);
+            let mut output = suture::metadata::capability_view(selector);
+            if let Some(path) = option_value(&args, "--for") {
+                let root = env::current_dir().unwrap_or_else(|_| ".".into());
+                let ws = Workspace::new(root).unwrap();
+                let bytes = ws.read_file(&path).ok();
+                output = suture::metadata::capabilities_for(&path, bytes.as_deref());
+            }
+            let rendered = if bool_flag(&args, "--json") && !bool_flag(&args, "--pretty") {
+                serde_json::to_string(&output).unwrap()
+            } else {
+                serde_json::to_string_pretty(&output).unwrap()
+            };
+            println!("{rendered}");
+        }
+        "examples" => {
+            print_examples(args.get(2).map(String::as_str));
+        }
+        "help" => {
+            if let Some(term) = option_value(&args, "--find") {
+                for (name, description) in suture::metadata::find_help(&term) {
+                    println!("{name}: {description}");
+                }
+            } else if let Some(command) = args.get(2) {
+                match suture::metadata::command_help(command) {
+                    Some(text) => println!("suture help {command}\n\n{text}"),
+                    None => {
+                        eprintln!("unknown command: {command}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                help();
+            }
+        }
+        "explain" => {
+            let Some(code) = args.get(2) else {
+                eprintln!("explain requires a reason code");
+                std::process::exit(1);
+            };
+            print_explain(code, bool_flag(&args, "--json"));
+        }
+        "suggest" => {
+            if args.iter().any(|arg| arg == "--from-refusal") {
+                let source = option_value(&args, "--from-refusal").unwrap_or_else(|| "-".into());
+                let input = if source == "-" {
+                    read_json_argument(&[])
+                } else {
+                    fs::read_to_string(source).unwrap_or_else(|error| {
+                        eprintln!("refusal certificate read failed: {error}");
+                        std::process::exit(3);
+                    })
+                };
+                let certificate: Certificate =
+                    serde_json::from_str(&input).unwrap_or_else(|error| {
+                        eprintln!("invalid refusal certificate: {error}");
+                        std::process::exit(2);
+                    });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&suture::metadata::refusal_recovery(&certificate))
+                        .unwrap()
+                );
+            } else {
+                let Some(path) = args.get(2) else {
+                    eprintln!(
+                        "suggest requires a workspace-relative path or --from-refusal CERTIFICATE"
+                    );
+                    std::process::exit(1);
+                };
+                let root = env::current_dir().unwrap_or_else(|_| ".".into());
+                let ws = Workspace::new(root).unwrap();
+                let bytes = ws.read_file(path).ok();
+                let suggestion = suture::metadata::suggest(
+                    path,
+                    option_value(&args, "--goal").as_deref(),
+                    option_value(&args, "--at").as_deref(),
+                    option_value(&args, "--mode").as_deref().unwrap_or("safe"),
+                    bytes.as_deref(),
+                );
+                println!("{}", serde_json::to_string_pretty(&suggestion).unwrap());
+            }
         }
         "inspect" => {
             let Some(path) = args.get(2) else {
@@ -220,12 +370,26 @@ fn main() {
             }
         }
         "schema" => {
-            let out = serde_json::json!({"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Suture v1.0 Protocol Schemas","protocol_version":PROTOCOL_VERSION,"request":schema_for!(Request),"certificate":schema_for!(Certificate),"transaction_request":schema_for!(TransactionRequest),"transaction_certificate":schema_for!(TransactionCertificate)});
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            let scope = args
+                .iter()
+                .skip(2)
+                .find(|arg| !arg.starts_with('-'))
+                .map(String::as_str);
+            let out = suture::metadata::schema(scope);
+            if bool_flag(&args, "--json") && !bool_flag(&args, "--pretty") {
+                println!("{}", serde_json::to_string(&out).unwrap());
+            } else {
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            }
         }
         "doctor" => {
             let root = env::current_dir().unwrap_or_else(|_| ".".into());
-            println!("suture doctor\nos: {}\narch: {}\nworkspace: {}\nprotocol: {}\nproviders: text json jsonc toml yaml markdown dotenv pattern patch code filesystem\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available",env::consts::OS,env::consts::ARCH,match Workspace::new(root){Ok(_)=>"ready",Err(_)=>"unavailable"}, PROTOCOL_VERSION);
+            let providers = suture::metadata::provider_metadata()
+                .into_iter()
+                .map(|provider| provider.name)
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("suture doctor\nos: {}\narch: {}\nworkspace: {}\nprotocol: {}\nproviders: {}\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available",env::consts::OS,env::consts::ARCH,match Workspace::new(root){Ok(_)=>"ready",Err(_)=>"unavailable"}, PROTOCOL_VERSION, providers);
         }
         _ => {
             eprintln!("unknown command: {command}");

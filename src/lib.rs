@@ -3,6 +3,7 @@
 pub mod capabilities;
 pub mod engine;
 pub mod lifecycle;
+pub mod metadata;
 pub mod path;
 pub mod pattern;
 pub mod pipeline;
