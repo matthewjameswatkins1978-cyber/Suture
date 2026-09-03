@@ -40,7 +40,7 @@ pub fn compute_sha256(bytes: &[u8]) -> String {
 }
 
 pub fn apply_byte_edits(original: &[u8], edits: &[ByteEdit]) -> Result<Vec<u8>, EngineError> {
-    for (index, edit) in edits.iter().enumerate() {
+    for edit in edits {
         if edit.start > edit.end || edit.end > original.len() {
             return Err(EngineError::OutOfBounds {
                 start: edit.start,
@@ -48,17 +48,19 @@ pub fn apply_byte_edits(original: &[u8], edits: &[ByteEdit]) -> Result<Vec<u8>, 
                 len: original.len(),
             });
         }
+    }
 
-        if let Some(previous) = index.checked_sub(1).map(|i| &edits[i]) {
-            if previous.end > edit.start {
-                return Err(EngineError::OverlappingOrUnsorted {
-                    index,
-                    start1: previous.start,
-                    end1: previous.end,
-                    start2: edit.start,
-                    end2: edit.end,
-                });
-            }
+    for (index, pair) in edits.windows(2).enumerate() {
+        let previous = &pair[0];
+        let edit = &pair[1];
+        if previous.end > edit.start {
+            return Err(EngineError::OverlappingOrUnsorted {
+                index: index + 1,
+                start1: previous.start,
+                end1: previous.end,
+                start2: edit.start,
+                end2: edit.end,
+            });
         }
     }
 
