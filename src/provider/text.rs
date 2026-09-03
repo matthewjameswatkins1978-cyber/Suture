@@ -55,11 +55,19 @@ impl TextProvider {
             {
                 return Ok(Vec::new());
             }
+            let newline = if content.windows(2).any(|w| w == b"\r\n") {
+                b"\r\n".as_slice()
+            } else {
+                b"\n".as_slice()
+            };
             let mut replacement = Vec::new();
             if !content.is_empty() && !content.ends_with(b"\n") {
-                replacement.push(b'\n');
+                replacement.extend_from_slice(newline);
             }
             replacement.extend_from_slice(wanted.as_bytes());
+            if content.ends_with(b"\n") {
+                replacement.extend_from_slice(newline);
+            }
             return Ok(vec![crate::engine::ByteEdit {
                 start: content.len(),
                 end: content.len(),
@@ -284,7 +292,7 @@ fn plan_move(
     let source = targets[0];
     let source_end = source + target.len();
     let destination = destinations[0];
-    if source <= destination && destination < source_end {
+    if source <= destination && destination <= source_end {
         return Ok(Vec::new());
     }
     let insertion = destination;
@@ -526,5 +534,16 @@ mod tests {
         let modified = apply_byte_edits(content, &edits).unwrap();
         // Check that BOM and CRLF are preserved
         assert_eq!(modified, b"\xEF\xBB\xBFline1\r\nmodified2\r\n");
+    }
+
+    #[test]
+    fn moving_an_already_adjacent_target_is_no_change() {
+        let content = b"A B C";
+        let op = TextOperation::Move {
+            target: "B ".into(),
+            before: "C".into(),
+        };
+        let edits = TextProvider::plan(content, &op, &Cardinality::ExactlyOne).unwrap();
+        assert!(edits.is_empty());
     }
 }

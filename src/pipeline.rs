@@ -8,7 +8,7 @@ use crate::protocol::{
     ByteRange, Certificate, CommitGuarantee, EffectBudget, EffectUsage, FailureReason,
     MutationPlan, OperationPayload, Outcome, PreservationFacts, RefusalReason, Request,
     StructuralValidation, TransactionCertificate, TransactionRequest, MAX_FILE_BYTES,
-    PROTOCOL_VERSION,
+    MAX_TRANSACTION_REQUESTS, PROTOCOL_VERSION,
 };
 use crate::provider::code::{self, CodeError, CodeOperation};
 use crate::provider::dotenv::{self, DotenvError};
@@ -122,36 +122,8 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
         }
     }
     if let Some(guard) = &request.region_guard {
-        let matches: Vec<_> = original
-            .windows(guard.anchor.len())
-            .enumerate()
-            .filter(|(_, bytes)| *bytes == guard.anchor.as_bytes())
-            .map(|(offset, _)| offset)
-            .collect();
-        if matches.len() != 1 {
-            return refusal(
-                request,
-                &file_path,
-                provider,
-                RefusalReason::CardinalityMismatch {
-                    expected: "one durable region anchor".into(),
-                    actual: matches.len(),
-                },
-                pre_hash,
-            );
-        }
-        let actual = compute_sha256(guard.anchor.as_bytes());
-        if actual != normalize_hash(&guard.target_sha256) {
-            return refusal(
-                request,
-                &file_path,
-                provider,
-                RefusalReason::StaleIdentity {
-                    expected_hash: normalize_hash(&guard.target_sha256),
-                    actual_hash: actual,
-                },
-                pre_hash,
-            );
+        if let Err(reason) = validate_region_guard(&original, guard) {
+            return refusal(request, &file_path, provider, reason, pre_hash);
         }
     }
     if let Some(reason) = unsupported_encoding(&original) {
@@ -177,7 +149,7 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
             pre_hash,
         );
     }
-    let edits = match plan_edits(&original, request) {
+    let edits = match plan_edits(&original, request, &file_path) {
         Ok(x) => x,
         Err((r, _d)) => return refusal(request, &file_path, provider, r, pre_hash),
     };
@@ -364,6 +336,16 @@ pub fn execute_transaction(
             },
         );
     }
+    if transaction.requests.len() > MAX_TRANSACTION_REQUESTS {
+        return transaction_refusal(
+            transaction,
+            RefusalReason::ResourceLimitExceeded {
+                dimension: "max_transaction_requests".into(),
+                limit: MAX_TRANSACTION_REQUESTS,
+                actual: transaction.requests.len(),
+            },
+        );
+    }
     let mut unique_paths = std::collections::HashSet::new();
     let has_duplicate_path = transaction.requests.iter().any(|request| {
         !unique_paths.insert(PathNormalizer::normalize(
@@ -388,6 +370,7 @@ pub fn execute_transaction(
         }
     }
     let mut prepared = Vec::new();
+    let mut certificates = Vec::new();
     let mut aggregate = EffectUsage {
         files: 0,
         matches: 0,
@@ -442,7 +425,7 @@ pub fn execute_transaction(
                 )
             }
         };
-        let edits = match plan_edits(&original, request) {
+        let edits = match plan_edits(&original, request, &path) {
             Ok(x) => x,
             Err((reason, _)) => return transaction_refusal(transaction, reason),
         };
@@ -470,6 +453,7 @@ pub fn execute_transaction(
         aggregate.changed_regions += certificate.effect.changed_regions;
         aggregate.changed_lines += certificate.effect.changed_lines;
         aggregate.changed_bytes += certificate.effect.changed_bytes;
+        certificates.push(certificate);
         prepared.push((path, original, candidate));
     }
     if let Some((dimension, limit, actual)) = budget_violation(&aggregate, &transaction.budget) {
@@ -482,11 +466,6 @@ pub fn execute_transaction(
             },
         );
     }
-    let certificates: Vec<Certificate> = transaction
-        .requests
-        .iter()
-        .map(|request| execute_request(workspace, request, true))
-        .collect();
     if dry_run {
         return TransactionCertificate {
             protocol_version: transaction.version.clone(),
@@ -633,6 +612,12 @@ pub fn execute_transaction(
         }
     }
     let cleanup = recovery::remove_journal(workspace, &transaction.transaction_id);
+    let recovery_state = if cleanup.is_ok() {
+        "not_required"
+    } else {
+        "recovery_available"
+    };
+    mark_transaction_certificates(&mut certificates, recovery_state);
     TransactionCertificate {
         protocol_version: transaction.version.clone(),
         transaction_id: transaction.transaction_id.clone(),
@@ -642,11 +627,7 @@ pub fn execute_transaction(
             Outcome::Applied
         },
         certificates,
-        rollback_state: if cleanup.is_ok() {
-            "not_required".into()
-        } else {
-            "recovery_available".into()
-        },
+        rollback_state: recovery_state.into(),
         transaction_guarantee: "transactional_with_rollback".into(),
         refusal_reason: None,
         failure_reason: cleanup.err().map(|error| FailureReason::CommitFailure {
@@ -758,32 +739,12 @@ fn execute_single_file_transaction(
             );
         }
         if let Some(guard) = &request.region_guard {
-            let matches: Vec<_> = current
-                .windows(guard.anchor.len())
-                .filter(|bytes| *bytes == guard.anchor.as_bytes())
-                .collect();
-            if matches.len() != 1 {
-                return transaction_refusal(
-                    transaction,
-                    RefusalReason::CardinalityMismatch {
-                        expected: "one durable region anchor".into(),
-                        actual: matches.len(),
-                    },
-                );
-            }
-            let actual = compute_sha256(guard.anchor.as_bytes());
-            if actual != normalize_hash(&guard.target_sha256) {
-                return transaction_refusal(
-                    transaction,
-                    RefusalReason::StaleIdentity {
-                        expected_hash: normalize_hash(&guard.target_sha256),
-                        actual_hash: actual,
-                    },
-                );
+            if let Err(reason) = validate_region_guard(&current, guard) {
+                return transaction_refusal(transaction, reason);
             }
         }
         let pre_hash = compute_sha256(&current);
-        let edits = match plan_edits(&current, request) {
+        let edits = match plan_edits(&current, request, &path) {
             Ok(edits) => edits,
             Err((reason, _)) => return transaction_refusal(transaction, reason),
         };
@@ -957,16 +918,18 @@ fn execute_single_file_transaction(
                 };
             }
             let cleanup = recovery::remove_journal(workspace, &transaction.transaction_id);
+            let recovery_state = if cleanup.is_ok() {
+                "not_required"
+            } else {
+                "recovery_available"
+            };
+            mark_transaction_certificates(&mut certificates, recovery_state);
             TransactionCertificate {
                 protocol_version: transaction.version.clone(),
                 transaction_id: transaction.transaction_id.clone(),
                 outcome: Outcome::Applied,
                 certificates,
-                rollback_state: if cleanup.is_ok() {
-                    "not_required".into()
-                } else {
-                    "recovery_available".into()
-                },
+                rollback_state: recovery_state.into(),
                 transaction_guarantee: "transactional_with_rollback".into(),
                 refusal_reason: None,
                 failure_reason: cleanup.err().map(|error| FailureReason::CommitFailure {
@@ -1029,6 +992,7 @@ fn transaction_failure(
 fn plan_edits(
     original: &[u8],
     request: &Request,
+    file_path: &str,
 ) -> Result<Vec<ByteEdit>, (RefusalReason, String)> {
     match &request.operation {
         OperationPayload::Text(o) => {
@@ -1134,12 +1098,14 @@ fn plan_edits(
                 }
             })
         }
-        OperationPayload::Patch(o) => patch::plan(original, o, &request.cardinality).map_err(|e| {
-            let detail = e.to_string();
-            match e {
-                PatchError::Refused(r) => (r, detail),
-            }
-        }),
+        OperationPayload::Patch(o) => {
+            patch::plan_with_path(original, o, &request.cardinality, file_path).map_err(|e| {
+                let detail = e.to_string();
+                match e {
+                    PatchError::Refused(r) => (r, detail),
+                }
+            })
+        }
     }
 }
 
@@ -1222,6 +1188,21 @@ fn execute_file_operation(
     dry_run: bool,
 ) -> Certificate {
     let provider = "filesystem";
+    if !matches!(
+        request.cardinality,
+        crate::protocol::Cardinality::ExactlyOne
+    ) {
+        return refusal(
+            request,
+            file_path,
+            provider,
+            RefusalReason::CardinalityMismatch {
+                expected: "exactly_one filesystem target".into(),
+                actual: 1,
+            },
+            String::new(),
+        );
+    }
     let source = workspace.resolve_path(file_path);
     let (pre_hash, post_hash, effect) = match operation {
         FileOperation::CreateFile {
@@ -1363,12 +1344,15 @@ fn execute_file_operation(
             }
             let dest = match workspace
                 .resolve_namespaced_path(destination, &request.namespace)
-                .and_then(|path| workspace.resolve_path(path))
+                .and_then(|path| workspace.resolve_destination_path(path))
             {
                 Ok(x) => x,
                 Err(e) => return workspace_error(request, file_path, provider, e),
             };
-            if *destination_absent && dest.exists() {
+            let same_source = std::fs::canonicalize(&dest)
+                .map(|path| source.as_ref().is_ok_and(|source| path == *source))
+                .unwrap_or(false);
+            if *destination_absent && dest.exists() && !same_source {
                 return refusal(
                     request,
                     file_path,
@@ -1555,6 +1539,51 @@ fn execute_file_operation(
     )
 }
 
+fn mark_transaction_certificates(certificates: &mut [Certificate], recovery_state: &str) {
+    for certificate in certificates {
+        if certificate.outcome == Outcome::Applied {
+            certificate.commit = CommitGuarantee {
+                mode: "committed_atomic_replace".into(),
+                content_replacement: "atomic replacement after staged flush".into(),
+                permissions: "platform-dependent; not asserted".into(),
+                timestamps: "not preserved".into(),
+                acl_xattr: "unknown".into(),
+            };
+        }
+        certificate.transaction_guarantee = "transactional_with_rollback".into();
+        certificate.recovery_state = recovery_state.into();
+    }
+}
+
+fn validate_region_guard(
+    content: &[u8],
+    guard: &crate::protocol::RegionGuard,
+) -> Result<(), RefusalReason> {
+    if guard.anchor.is_empty() {
+        return Err(RefusalReason::MalformedInput {
+            details: "durable region anchor must not be empty".into(),
+        });
+    }
+    let matches = content
+        .windows(guard.anchor.len())
+        .filter(|bytes| *bytes == guard.anchor.as_bytes())
+        .count();
+    if matches != 1 {
+        return Err(RefusalReason::CardinalityMismatch {
+            expected: "one durable region anchor".into(),
+            actual: matches,
+        });
+    }
+    let actual = compute_sha256(guard.anchor.as_bytes());
+    if actual != normalize_hash(&guard.target_sha256) {
+        return Err(RefusalReason::StaleIdentity {
+            expected_hash: normalize_hash(&guard.target_sha256),
+            actual_hash: actual,
+        });
+    }
+    Ok(())
+}
+
 fn normalize_hash(value: &str) -> String {
     value.strip_prefix("sha256:").unwrap_or(value).into()
 }
@@ -1580,7 +1609,7 @@ fn provider_version(op: &OperationPayload) -> &'static str {
         OperationPayload::Jsonc(_) => "jsonc-source-v1",
         OperationPayload::Toml(_) => "toml-edit-narrow-v1",
         OperationPayload::Pattern(_) => "regex-automata-bounded-v1",
-        OperationPayload::Markdown(_) => "markdown-regions-v1",
+        OperationPayload::Markdown(_) => "markdown-regions-v2",
         OperationPayload::Yaml(_) => "yaml-conservative-source-v1",
         OperationPayload::File(_) => "lifecycle-checked-v1",
         OperationPayload::Code(_) => "tree-sitter-node-v1",
@@ -1595,7 +1624,7 @@ fn unsupported_encoding(bytes: &[u8]) -> Option<RefusalReason> {
         || bytes.starts_with(&[0, 0, 0xfe, 0xff])
     {
         Some(RefusalReason::UnsupportedEncoding {
-            details: "UTF-16/UTF-32 is not part of v0.1".into(),
+            details: "UTF-16/UTF-32 is not supported by this protocol version".into(),
         })
     } else if std::str::from_utf8(bytes).is_err() {
         Some(RefusalReason::UnsupportedEncoding {
@@ -2017,7 +2046,7 @@ impl PreservationFacts {
     fn from_bytes(a: &[u8], b: &[u8]) -> Self {
         Self {
             unrelated_bytes_changed: false,
-            line_endings_changed: a.contains(&b'\r') != b.contains(&b'\r'),
+            line_endings_changed: newline_profile(a) != newline_profile(b),
             bom_changed: a.starts_with(&[0xef, 0xbb, 0xbf]) != b.starts_with(&[0xef, 0xbb, 0xbf]),
             final_newline_changed: a.ends_with(b"\n") != b.ends_with(b"\n"),
             comments_preserved: Some(comment_count(a) == comment_count(b)),
@@ -2053,7 +2082,7 @@ fn comment_count(b: &[u8]) -> usize {
     b.split(|x| *x == b'\n')
         .filter(|l| {
             l.iter()
-                .position(|x| !*x == b' ' && !*x == b'\t')
+                .position(|x| *x != b' ' && *x != b'\t' && *x != b'\r')
                 .map(|i| l[i..].starts_with(b"#"))
                 .unwrap_or(false)
         })

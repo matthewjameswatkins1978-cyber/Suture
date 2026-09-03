@@ -5,7 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
-#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+#[serde(
+    tag = "type",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum PathNamespace {
     #[default]
     Native,

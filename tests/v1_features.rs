@@ -212,6 +212,70 @@ fn desired_state_replay_is_no_change() {
 }
 
 #[test]
+fn desired_state_providers_insert_missing_values_and_preserve_newlines() {
+    let yaml = b"name: old\r\n";
+    let edits = suture::provider::yaml::plan(
+        yaml,
+        &YamlOperation::EnsurePresent {
+            path: "count".into(),
+            value: serde_json::json!(1),
+        },
+        &Cardinality::ExactlyOne,
+    )
+    .unwrap();
+    assert_eq!(
+        suture::engine::apply_byte_edits(yaml, &edits).unwrap(),
+        b"name: old\r\ncount: 1\r\n"
+    );
+
+    let dotenv = b"A=1\r\n";
+    let edits = suture::provider::dotenv::plan(
+        dotenv,
+        &suture::provider::dotenv::DotenvOperation::EnsurePresent {
+            key: "B".into(),
+            value: "2".into(),
+        },
+        &Cardinality::ExactlyOne,
+    )
+    .unwrap();
+    assert_eq!(
+        suture::engine::apply_byte_edits(dotenv, &edits).unwrap(),
+        b"A=1\r\nB=2\r\n"
+    );
+
+    let toml = b"name = \"suture\"\n";
+    let edits = suture::provider::toml::TomlProvider::plan(
+        toml,
+        &suture::provider::toml::TomlOperation::EnsurePresent {
+            path: "version".into(),
+            value: suture::provider::toml::TomlValueWrapper::String("1".into()),
+        },
+        &Cardinality::ExactlyOne,
+    )
+    .unwrap();
+    let result = suture::engine::apply_byte_edits(toml, &edits).unwrap();
+    assert!(String::from_utf8_lossy(&result).contains("version = \"1\""));
+}
+
+#[test]
+fn dotenv_rejects_multiline_values() {
+    let result = suture::provider::dotenv::plan(
+        b"A=1\n",
+        &suture::provider::dotenv::DotenvOperation::Set {
+            key: "A".into(),
+            value: "bad\nvalue".into(),
+        },
+        &Cardinality::ExactlyOne,
+    );
+    assert!(matches!(
+        result,
+        Err(suture::provider::dotenv::DotenvError::Refused(
+            suture::protocol::RefusalReason::MalformedInput { .. }
+        ))
+    ));
+}
+
+#[test]
 fn jsonc_comments_are_not_in_edit_ranges() {
     let original = br#"{
   // keep this comment
@@ -293,6 +357,62 @@ fn markdown_yaml_and_lifecycle_are_guarded() {
 }
 
 #[test]
+fn markdown_ensure_and_insert_do_not_shift_or_duplicate_headings() {
+    let missing = b"intro\n";
+    let ensure = MarkdownOperation::EnsureSection {
+        heading: "Added".into(),
+        content: "body".into(),
+    };
+    let edits =
+        suture::provider::markdown::plan(missing, &ensure, &Cardinality::ExactlyOne).unwrap();
+    let ensured = suture::engine::apply_byte_edits(missing, &edits).unwrap();
+    assert_eq!(ensured, b"intro\n# Added\nbody\n");
+
+    let existing = b"# A\nold\n# B\nkeep\n";
+    let insert = MarkdownOperation::InsertAfterHeading {
+        heading: "A".into(),
+        content: "new".into(),
+    };
+    let edits =
+        suture::provider::markdown::plan(existing, &insert, &Cardinality::ExactlyOne).unwrap();
+    let inserted = suture::engine::apply_byte_edits(existing, &edits).unwrap();
+    assert_eq!(inserted, b"# A\nnew\nold\n# B\nkeep\n");
+}
+
+#[test]
+fn markdown_list_items_and_fenced_blocks_are_bounded() {
+    let list = b"- first\r\n- second\r\n";
+    let edits = suture::provider::markdown::plan(
+        list,
+        &MarkdownOperation::ReplaceListItem {
+            target: "second".into(),
+            replacement: "updated".into(),
+        },
+        &Cardinality::ExactlyOne,
+    )
+    .unwrap();
+    assert_eq!(
+        suture::engine::apply_byte_edits(list, &edits).unwrap(),
+        b"- first\r\n- updated\r\n"
+    );
+
+    let fenced = b"before\n```rust\nold\n```\nafter\n";
+    let edits = suture::provider::markdown::plan(
+        fenced,
+        &MarkdownOperation::ReplaceFencedBlock {
+            info: "rust".into(),
+            content: "new".into(),
+        },
+        &Cardinality::ExactlyOne,
+    )
+    .unwrap();
+    assert_eq!(
+        suture::engine::apply_byte_edits(fenced, &edits).unwrap(),
+        b"before\n```rust\nnew\n```\nafter\n"
+    );
+}
+
+#[test]
 fn multi_file_transaction_prepares_then_commits_and_cleans_journal() {
     let t = TempDir::new().unwrap();
     let w = Workspace::new(t.path()).unwrap();
@@ -324,6 +444,14 @@ fn multi_file_transaction_prepares_then_commits_and_cleans_journal() {
     };
     let c = suture::pipeline::execute_transaction(&w, &tx, false);
     assert_eq!(c.outcome, Outcome::Applied);
+    assert!(c
+        .certificates
+        .iter()
+        .filter(|certificate| certificate.outcome == Outcome::Applied)
+        .all(
+            |certificate| certificate.commit.mode == "committed_atomic_replace"
+                && certificate.transaction_guarantee == "transactional_with_rollback"
+        ));
     assert_eq!(w.read_file("a.txt").unwrap(), b"new-a");
     assert_eq!(w.read_file("b.txt").unwrap(), b"new-b");
     assert!(!t.path().join(".suture-recovery/tx-v1-test.json").exists());
@@ -420,6 +548,41 @@ fn strict_patch_requires_exact_context() {
 }
 
 #[test]
+fn strict_patch_rejects_wrong_path_and_ignored_garbage() {
+    let t = TempDir::new().unwrap();
+    let w = Workspace::new(t.path()).unwrap();
+    std::fs::write(t.path().join("x.txt"), b"one\ntwo\n").unwrap();
+    let wrong_path = "--- a/other.txt\n+++ b/other.txt\n@@ -1,1 +1,1 @@\n-one\n+ONE\n";
+    let c = execute_request(
+        &w,
+        &request(
+            "x.txt",
+            OperationPayload::Patch(PatchOperation::UnifiedDiff {
+                patch: wrong_path.into(),
+            }),
+        ),
+        false,
+    );
+    assert_eq!(c.outcome, Outcome::Refused);
+    assert_eq!(c.reason_code.as_deref(), Some("INVALID_INPUT"));
+    assert_eq!(w.read_file("x.txt").unwrap(), b"one\ntwo\n");
+
+    let garbage = "--- a/x.txt\n+++ b/x.txt\nnoise\n@@ -1,1 +1,1 @@\n-one\n+ONE\n";
+    let c = execute_request(
+        &w,
+        &request(
+            "x.txt",
+            OperationPayload::Patch(PatchOperation::UnifiedDiff {
+                patch: garbage.into(),
+            }),
+        ),
+        false,
+    );
+    assert_eq!(c.outcome, Outcome::Refused);
+    assert_eq!(w.read_file("x.txt").unwrap(), b"one\ntwo\n");
+}
+
+#[test]
 fn durable_region_guard_survives_unrelated_edit() {
     let t = TempDir::new().unwrap();
     let w = Workspace::new(t.path()).unwrap();
@@ -439,6 +602,67 @@ fn durable_region_guard_survives_unrelated_edit() {
     let c = execute_request(&w, &r, false);
     assert_eq!(c.outcome, Outcome::Applied);
     assert_eq!(w.read_file("x.txt").unwrap(), b"unrelated\nchanged\n");
+}
+
+#[test]
+fn empty_region_anchor_is_refused_without_panicking() {
+    let t = TempDir::new().unwrap();
+    let w = Workspace::new(t.path()).unwrap();
+    std::fs::write(t.path().join("x.txt"), b"target\n").unwrap();
+    let mut r = request(
+        "x.txt",
+        OperationPayload::Text(TextOperation::Replace {
+            target: "target".into(),
+            replacement: "changed".into(),
+        }),
+    );
+    r.region_guard = Some(RegionGuard {
+        anchor: String::new(),
+        target_sha256: String::new(),
+    });
+    let c = execute_request(&w, &r, false);
+    assert_eq!(c.outcome, Outcome::Refused);
+    assert_eq!(c.reason_code.as_deref(), Some("INVALID_INPUT"));
+}
+
+#[cfg(windows)]
+#[test]
+fn case_only_rename_preserves_the_requested_destination_spelling() {
+    let t = TempDir::new().unwrap();
+    let w = Workspace::new(t.path()).unwrap();
+    std::fs::write(t.path().join("name.txt"), b"content").unwrap();
+    let c = execute_request(
+        &w,
+        &request(
+            "name.txt",
+            OperationPayload::File(FileOperation::RenameFile {
+                destination: "NAME.TXT".into(),
+                expected_source_hash: compute_sha256(b"content"),
+                destination_absent: true,
+            }),
+        ),
+        false,
+    );
+    assert_eq!(c.outcome, Outcome::Applied);
+    assert_eq!(w.read_file("NAME.TXT").unwrap(), b"content");
+}
+
+#[test]
+fn lifecycle_operations_require_exactly_one_target() {
+    let t = TempDir::new().unwrap();
+    let w = Workspace::new(t.path()).unwrap();
+    let mut r = request(
+        "new.txt",
+        OperationPayload::File(FileOperation::CreateFile {
+            expected_absent: true,
+            content: b"content".to_vec(),
+        }),
+    );
+    r.cardinality = Cardinality::All;
+    let c = execute_request(&w, &r, false);
+    assert_eq!(c.outcome, Outcome::Refused);
+    assert_eq!(c.reason_code.as_deref(), Some("CARDINALITY_MISMATCH"));
+    assert!(!t.path().join("new.txt").exists());
 }
 
 #[test]

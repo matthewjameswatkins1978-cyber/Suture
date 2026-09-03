@@ -68,15 +68,22 @@ pub fn plan(
     }
     if matches.is_empty() {
         if let DotenvOperation::EnsurePresent { value, .. } = operation {
-            let prefix = if text.is_empty() || text.ends_with('\n') {
+            let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+            let prefix = if text.is_empty() || text.ends_with('\n') || text.ends_with('\r') {
                 ""
             } else {
-                "\n"
+                newline
+            };
+            let suffix = if text.ends_with('\n') || text.ends_with('\r') {
+                newline
+            } else {
+                ""
             };
             return Ok(vec![ByteEdit {
                 start: content.len(),
                 end: content.len(),
-                replacement: format!("{prefix}{key}={}\n", quote_if_needed(value)).into_bytes(),
+                replacement: format!("{prefix}{key}={}{suffix}", quote_if_needed(value))
+                    .into_bytes(),
             }]);
         }
         if matches!(operation, DotenvOperation::Unset { .. }) {
@@ -100,6 +107,11 @@ pub fn plan(
         DotenvOperation::Set { value, .. } | DotenvOperation::EnsurePresent { value, .. } => value,
         DotenvOperation::Unset { .. } => unreachable!(),
     };
+    if value.contains(['\r', '\n', '\0']) {
+        return Err(DotenvError::Refused(RefusalReason::MalformedInput {
+            details: "dotenv values may not contain line breaks or NUL bytes".into(),
+        }));
+    }
     let comment_end = line[value_start - start..line_end - start]
         .find(" #")
         .map(|i| value_start + i)

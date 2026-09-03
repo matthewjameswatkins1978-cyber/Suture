@@ -23,6 +23,24 @@ pub fn plan(
     operation: &PatchOperation,
     cardinality: &Cardinality,
 ) -> Result<Vec<ByteEdit>, PatchError> {
+    plan_inner(content, operation, cardinality, None)
+}
+
+pub fn plan_with_path(
+    content: &[u8],
+    operation: &PatchOperation,
+    cardinality: &Cardinality,
+    expected_path: &str,
+) -> Result<Vec<ByteEdit>, PatchError> {
+    plan_inner(content, operation, cardinality, Some(expected_path))
+}
+
+fn plan_inner(
+    content: &[u8],
+    operation: &PatchOperation,
+    cardinality: &Cardinality,
+    expected_path: Option<&str>,
+) -> Result<Vec<ByteEdit>, PatchError> {
     if !matches!(cardinality, Cardinality::ExactlyOne) {
         return Err(PatchError::Refused(RefusalReason::CardinalityMismatch {
             expected: "exactly_one patch document".into(),
@@ -44,6 +62,20 @@ pub fn plan(
     if plus == 0 {
         return Err(malformed("missing --- file header"));
     }
+    if let Some(expected_path) = expected_path {
+        let source_path = header_path(lines[plus - 1], "---")?;
+        let destination_path = header_path(lines[plus], "+++")?;
+        let expected_path = normalize_patch_path(expected_path);
+        if source_path == "/dev/null"
+            || destination_path == "/dev/null"
+            || source_path != destination_path
+            || source_path != expected_path
+        {
+            return Err(malformed(&format!(
+                "patch paths do not exactly target '{expected_path}'"
+            )));
+        }
+    }
     let source = std::str::from_utf8(content).map_err(|_| {
         PatchError::Refused(RefusalReason::UnsupportedEncoding {
             details: "patch provider requires UTF-8".into(),
@@ -54,8 +86,7 @@ pub fn plan(
     let mut i = plus + 1;
     while i < lines.len() {
         if !lines[i].starts_with("@@ ") {
-            i += 1;
-            continue;
+            return Err(malformed("unexpected text outside unified-diff hunks"));
         }
         let (old_start, old_count) = parse_range(lines[i], '-')?;
         let (_, new_count) = parse_range(lines[i], '+')?;
@@ -107,6 +138,12 @@ pub fn plan(
             .map(|line| line.len())
             .sum();
         let end = start + actual.iter().map(|line| line.len()).sum::<usize>();
+        if edits
+            .iter()
+            .any(|edit: &ByteEdit| start < edit.end || (start == edit.start && start == edit.end))
+        {
+            return Err(malformed("overlapping or duplicate unified-diff hunks"));
+        }
         edits.push(ByteEdit {
             start,
             end,
@@ -117,6 +154,21 @@ pub fn plan(
         return Err(malformed("patch contains no hunks"));
     }
     Ok(edits)
+}
+
+fn header_path(line: &str, marker: &str) -> Result<String, PatchError> {
+    let path = line
+        .strip_prefix(&format!("{marker} "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .ok_or_else(|| malformed("invalid unified-diff file header"))?;
+    Ok(normalize_patch_path(path))
+}
+
+fn normalize_patch_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let path = path.strip_prefix("a/").unwrap_or(&path);
+    let path = path.strip_prefix("b/").unwrap_or(path);
+    path.trim_start_matches("./").into()
 }
 
 fn parse_range(line: &str, prefix: char) -> Result<(usize, usize), PatchError> {

@@ -10,7 +10,7 @@ use crate::path::PathNamespace;
 use crate::pattern::PatternOperation;
 use crate::protocol::{
     Cardinality, EffectBudget, OperationPayload, Request, TransactionRequest, MAX_FILE_BYTES,
-    MAX_REQUEST_BYTES, PROTOCOL_VERSION,
+    MAX_REQUEST_BYTES, MAX_TRANSACTION_REQUESTS, PROTOCOL_VERSION,
 };
 use crate::provider::code::CodeOperation;
 use crate::provider::dotenv::DotenvOperation;
@@ -64,6 +64,7 @@ pub struct ReasonMetadata {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ResourceLimits {
     pub max_request_bytes: usize,
+    pub max_transaction_requests: usize,
     pub max_diagnostic_bytes: usize,
     pub max_pattern_bytes: usize,
     pub max_file_bytes: usize,
@@ -259,6 +260,38 @@ pub fn operation_metadata() -> Vec<OperationMetadata> {
             vec!["unrelated_bytes"],
         ),
         op(
+            "replace_list_item",
+            "Replace one bounded Markdown list item.",
+            "list_item",
+            false,
+            "mixed",
+            vec!["unrelated_bytes"],
+        ),
+        op(
+            "ensure_list_item",
+            "Ensure one Markdown list item exists.",
+            "list_item",
+            true,
+            "additive",
+            vec!["unrelated_bytes"],
+        ),
+        op(
+            "delete_list_item",
+            "Delete one bounded Markdown list item.",
+            "list_item",
+            false,
+            "destructive",
+            vec!["unrelated_bytes"],
+        ),
+        op(
+            "replace_fenced_block",
+            "Replace one fenced Markdown block body.",
+            "fenced_region",
+            false,
+            "mixed",
+            vec!["unrelated_bytes"],
+        ),
+        op(
             "replace_node",
             "Replace one parsed syntax node.",
             "syntax_node_text",
@@ -440,12 +473,16 @@ pub fn provider_metadata() -> Vec<ProviderMetadata> {
         ),
         provider(
             "markdown",
-            "markdown-regions-v1",
+            "markdown-regions-v2",
             vec![
                 "replace_section",
                 "ensure_section",
                 "delete_section",
                 "insert_after_heading",
+                "replace_list_item",
+                "ensure_list_item",
+                "delete_list_item",
+                "replace_fenced_block",
             ],
             vec!["heading", "section", "fenced_region"],
             "unrelated markdown bytes",
@@ -777,7 +814,7 @@ pub fn capabilities() -> CapabilityManifest {
         "path_namespaces": ["native", "windows", "wsl", "posix"],
         "code_languages": ["javascript", "typescript", "jsx", "tsx", "python", "rust", "go"],
         "transaction_capabilities": {"single_file": true, "multi_file": true, "rollback": true, "crash_recovery": true},
-        "resource_limits": {"max_request_bytes": MAX_REQUEST_BYTES, "max_diagnostic_bytes": 4096, "max_pattern_bytes": 8192, "max_file_bytes": MAX_FILE_BYTES},
+        "resource_limits": {"max_request_bytes": MAX_REQUEST_BYTES, "max_transaction_requests": MAX_TRANSACTION_REQUESTS, "max_diagnostic_bytes": 4096, "max_pattern_bytes": 8192, "max_file_bytes": MAX_FILE_BYTES},
         "effect_budget_dimensions": ["max_files", "max_matches", "max_changed_regions", "max_changed_lines", "max_changed_bytes", "allowed_path_prefixes"],
         "reason_codes": reason_codes
     });
@@ -829,6 +866,7 @@ pub fn capabilities() -> CapabilityManifest {
         },
         resource_limits: ResourceLimits {
             max_request_bytes: MAX_REQUEST_BYTES,
+            max_transaction_requests: MAX_TRANSACTION_REQUESTS,
             max_diagnostic_bytes: 4_096,
             max_pattern_bytes: 8_192,
             max_file_bytes: MAX_FILE_BYTES,
