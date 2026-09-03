@@ -1,12 +1,10 @@
-use suture::protocol::{
-    Cardinality, OperationPayload, Outcome, RefusalReason, Request,
-};
+use std::fs;
+use suture::pipeline::execute_request;
+use suture::protocol::{Cardinality, OperationPayload, Outcome, RefusalReason, Request};
 use suture::provider::json::JsonOperation;
 use suture::provider::text::TextOperation;
 use suture::provider::toml::{TomlOperation, TomlValueWrapper};
-use suture::pipeline::execute_request;
 use suture::workspace::Workspace;
-use std::fs;
 use tempfile::TempDir;
 
 #[test]
@@ -54,7 +52,10 @@ fn test_adversarial_corpus_all_38() {
     };
     let cert = execute_request(&workspace, &req, false);
     assert_eq!(cert.outcome, Outcome::Refused);
-    assert!(matches!(cert.refusal_reason, Some(RefusalReason::DuplicateTarget { .. })));
+    assert!(matches!(
+        cert.refusal_reason,
+        Some(RefusalReason::DuplicateTarget { .. })
+    ));
 
     // 3. Zero target
     write_file("file3.txt", b"hello world\n");
@@ -71,7 +72,10 @@ fn test_adversarial_corpus_all_38() {
     };
     let cert = execute_request(&workspace, &req, false);
     assert_eq!(cert.outcome, Outcome::Refused);
-    assert!(matches!(cert.refusal_reason, Some(RefusalReason::MissingTarget { .. })));
+    assert!(matches!(
+        cert.refusal_reason,
+        Some(RefusalReason::MissingTarget { .. })
+    ));
 
     // 4. Two near-identical blocks in different contexts
     // If target occurs twice, ExactlyOne fails. But what if we test context disambiguation or duplicate refusal?
@@ -90,7 +94,10 @@ fn test_adversarial_corpus_all_38() {
     };
     let cert = execute_request(&workspace, &req, false);
     assert_eq!(cert.outcome, Outcome::Refused);
-    assert!(matches!(cert.refusal_reason, Some(RefusalReason::DuplicateTarget { count: 2, .. })));
+    assert!(matches!(
+        cert.refusal_reason,
+        Some(RefusalReason::DuplicateTarget { count: 2, .. })
+    ));
 
     // 5. Stale whole-file identity
     write_file("file5.txt", b"original content\n");
@@ -107,7 +114,10 @@ fn test_adversarial_corpus_all_38() {
     };
     let cert = execute_request(&workspace, &req, false);
     assert_eq!(cert.outcome, Outcome::Refused);
-    assert!(matches!(cert.refusal_reason, Some(RefusalReason::StaleIdentity { .. })));
+    assert!(matches!(
+        cert.refusal_reason,
+        Some(RefusalReason::StaleIdentity { .. })
+    ));
 
     // 6. Multiple sequential operations
     write_file("file6.txt", b"step one\n");
@@ -261,7 +271,10 @@ fn test_adversarial_corpus_all_38() {
     };
     let cert13 = execute_request(&workspace, &req13, false);
     assert_eq!(cert13.outcome, Outcome::Refused);
-    assert!(matches!(cert13.refusal_reason, Some(RefusalReason::MissingTarget { .. })));
+    assert!(matches!(
+        cert13.refusal_reason,
+        Some(RefusalReason::MissingTarget { .. })
+    ));
 
     // 14. NBSP vs normal space
     write_file("file14.txt", "hello\u{00A0}world\n".as_bytes());
@@ -296,7 +309,10 @@ fn test_adversarial_corpus_all_38() {
     assert_eq!(cert15.outcome, Outcome::Refused);
 
     // 16. Smart quote mismatch
-    write_file("file16.txt", "const msg = \u{201C}hello\u{201D};\n".as_bytes());
+    write_file(
+        "file16.txt",
+        "const msg = \u{201C}hello\u{201D};\n".as_bytes(),
+    );
     let req16 = Request {
         version: "0.1.0".to_string(),
         file_path: "file16.txt".to_string(),
@@ -408,10 +424,16 @@ fn test_adversarial_corpus_all_38() {
     };
     let cert22 = execute_request(&workspace, &req22, false);
     assert_eq!(cert22.outcome, Outcome::Refused);
-    assert!(matches!(cert22.refusal_reason, Some(RefusalReason::MalformedInput { .. })));
+    assert!(matches!(
+        cert22.refusal_reason,
+        Some(RefusalReason::MalformedInput { .. })
+    ));
 
     // 23. TOML comments preservation
-    write_file("file23.toml", b"# Important comment\n[owner]\nname = \"Tom\"\n");
+    write_file(
+        "file23.toml",
+        b"# Important comment\n[owner]\nname = \"Tom\"\n",
+    );
     let req23 = Request {
         version: "0.1.0".to_string(),
         file_path: "file23.toml".to_string(),
@@ -495,7 +517,10 @@ fn test_adversarial_corpus_all_38() {
     };
     let cert27 = execute_request(&workspace, &req27, false);
     assert_eq!(cert27.outcome, Outcome::Refused);
-    assert!(matches!(cert27.refusal_reason, Some(RefusalReason::MalformedInput { .. })));
+    assert!(matches!(
+        cert27.refusal_reason,
+        Some(RefusalReason::MalformedInput { .. })
+    ));
 
     // 28. Path traversal refusal
     write_file("file28.txt", b"safe\n");
@@ -512,17 +537,20 @@ fn test_adversarial_corpus_all_38() {
     };
     let cert28 = execute_request(&workspace, &req28, false);
     assert_eq!(cert28.outcome, Outcome::Refused);
-    assert!(matches!(cert28.refusal_reason, Some(RefusalReason::WorkspaceTraversal { .. })));
+    assert!(matches!(
+        cert28.refusal_reason,
+        Some(RefusalReason::WorkspaceTraversal { .. })
+    ));
 
     // 29. Symlink escape refusal
     let outside_dir = TempDir::new().unwrap();
     let outside_file = outside_dir.path().join("outside.txt");
     fs::write(&outside_file, b"secret outside\n").unwrap();
 
-    let symlink_path = tmp.path().join("symlink_escape.txt");
+    let _symlink_path = tmp.path().join("symlink_escape.txt");
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(&outside_file, &symlink_path).unwrap();
+        std::os::unix::fs::symlink(&outside_file, &_symlink_path).unwrap();
     }
     let req29 = Request {
         version: "0.1.0".to_string(),
@@ -535,9 +563,9 @@ fn test_adversarial_corpus_all_38() {
             replacement: "escaped".to_string(),
         }),
     };
-    let cert29 = execute_request(&workspace, &req29, false);
+    let _cert29 = execute_request(&workspace, &req29, false);
     #[cfg(unix)]
-    assert_eq!(cert29.outcome, Outcome::Refused);
+    assert_eq!(_cert29.outcome, Outcome::Refused);
 
     // 30. Concurrent / unrelated modification refusal (stale pre-state hash check)
     write_file("file30.txt", b"version 1\n");
@@ -559,7 +587,10 @@ fn test_adversarial_corpus_all_38() {
     req30_apply.expected_pre_hash = Some("sha256:fakehash".to_string());
     let cert30 = execute_request(&workspace, &req30_apply, false);
     assert_eq!(cert30.outcome, Outcome::Refused);
-    assert!(matches!(cert30.refusal_reason, Some(RefusalReason::StaleIdentity { .. })));
+    assert!(matches!(
+        cert30.refusal_reason,
+        Some(RefusalReason::StaleIdentity { .. })
+    ));
 
     // 31. Large file with tiny edit
     let mut large_content = vec![b'a'; 1024 * 1024];
@@ -601,7 +632,10 @@ fn test_adversarial_corpus_all_38() {
     };
     let cert32 = execute_request(&workspace, &req32, false);
     assert_eq!(cert32.outcome, Outcome::Refused);
-    assert!(matches!(cert32.refusal_reason, Some(RefusalReason::StaleIdentity { .. })));
+    assert!(matches!(
+        cert32.refusal_reason,
+        Some(RefusalReason::StaleIdentity { .. })
+    ));
 
     // 33. Unsupported encoding (e.g. UTF-16 invalid UTF-8)
     let utf16_bytes = vec![0xFF, 0xFE, b'h', 0, b'i', 0];
@@ -619,7 +653,10 @@ fn test_adversarial_corpus_all_38() {
     };
     let cert33 = execute_request(&workspace, &req33, false);
     assert_eq!(cert33.outcome, Outcome::Refused);
-    assert!(matches!(cert33.refusal_reason, Some(RefusalReason::MalformedInput { .. })));
+    assert!(matches!(
+        cert33.refusal_reason,
+        Some(RefusalReason::MalformedInput { .. })
+    ));
 
     // 34. Provider capability missing / unsupported operation or provider mismatch
     // (Tested via unknown operation or unhandled format)
@@ -648,7 +685,10 @@ fn test_adversarial_corpus_all_38() {
     assert!(cert37.diff_summary.is_some());
 
     // 38. Unrelated secret-looking text not echoed in certificate
-    write_file("file38.txt", b"SECRET_API_KEY=super-secret-token-12345\n\n\n\n\npublic_field = \"hello\"\n");
+    write_file(
+        "file38.txt",
+        b"SECRET_API_KEY=super-secret-token-12345\n\n\n\n\npublic_field = \"hello\"\n",
+    );
     let req38 = Request {
         version: "0.1.0".to_string(),
         file_path: "file38.txt".to_string(),
