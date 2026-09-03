@@ -10,7 +10,7 @@ use suture::{
     protocol::{
         Certificate, CommitGuarantee, EffectBudget, EffectUsage, FailureReason, Outcome,
         PreservationFacts, RefusalReason, Request, StructuralValidation, TransactionRequest,
-        PROTOCOL_VERSION,
+        MAX_REQUEST_BYTES, PROTOCOL_VERSION,
     },
     workspace::Workspace,
 };
@@ -159,6 +159,20 @@ fn main() {
                     std::process::exit(3)
                 }
             };
+            if input.len() > MAX_REQUEST_BYTES {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&empty_cert(
+                        RefusalReason::ResourceLimitExceeded {
+                            dimension: "max_request_bytes".into(),
+                            limit: MAX_REQUEST_BYTES,
+                            actual: input.len(),
+                        },
+                    ))
+                    .unwrap()
+                );
+                std::process::exit(2);
+            }
             let req: Request = match serde_json::from_str(&input) {
                 Ok(r) => r,
                 Err(e) => {
@@ -213,6 +227,10 @@ fn main() {
                     std::process::exit(3);
                 }
             };
+            if input.len() > MAX_REQUEST_BYTES {
+                eprintln!("transaction request exceeds {MAX_REQUEST_BYTES} bytes");
+                std::process::exit(2);
+            }
             let transaction: TransactionRequest = match serde_json::from_str(&input) {
                 Ok(x) => x,
                 Err(e) => {
@@ -414,6 +432,20 @@ fn run_mcp() {
         }
     };
     for line in io::stdin().lock().lines().map_while(Result::ok) {
+        if line.len() > MAX_REQUEST_BYTES {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": serde_json::Value::Null,
+                    "error": {
+                        "code": -32600,
+                        "message": format!("request exceeds {MAX_REQUEST_BYTES} bytes")
+                    }
+                })
+            );
+            continue;
+        }
         let request: serde_json::Value = match serde_json::from_str(&line) {
             Ok(x) => x,
             Err(_) => continue,

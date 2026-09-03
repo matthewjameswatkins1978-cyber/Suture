@@ -1,5 +1,6 @@
 use suture::engine::compute_sha256;
 use suture::lifecycle::FileOperation;
+use suture::pattern::PatternOperation;
 use suture::pipeline::execute_request;
 use suture::protocol::{
     Cardinality, EffectBudget, OperationPayload, Outcome, RegionGuard, Request, TransactionRequest,
@@ -144,6 +145,27 @@ fn effect_budget_refuses_before_write() {
     assert_eq!(c.reason_code.as_deref(), Some("EFFECT_BUDGET_EXCEEDED"));
     assert!(!c.effect.passed);
     assert_eq!(w.read_file("x.txt").unwrap(), b"one two\n");
+}
+
+#[test]
+fn built_in_pattern_resource_limit_is_explicit() {
+    let t = TempDir::new().unwrap();
+    let w = Workspace::new(t.path()).unwrap();
+    std::fs::write(t.path().join("x.txt"), b"text\n").unwrap();
+    let c = execute_request(
+        &w,
+        &request(
+            "x.txt",
+            OperationPayload::Pattern(PatternOperation::Replace {
+                pattern: "a".repeat(8_193),
+                replacement: "b".into(),
+            }),
+        ),
+        false,
+    );
+    assert_eq!(c.outcome, Outcome::Refused);
+    assert_eq!(c.reason_code.as_deref(), Some("RESOURCE_LIMIT_EXCEEDED"));
+    assert_eq!(w.read_file("x.txt").unwrap(), b"text\n");
 }
 
 #[test]
