@@ -5,6 +5,7 @@ use crate::protocol::{Candidate, Cardinality, RefusalReason};
 use memchr::{memchr_iter, memmem};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use thiserror::Error;
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
@@ -217,23 +218,27 @@ fn enforce_cardinality(
     }
 
     let actual = matches.len();
+    let duplicate = || {
+        TextProviderError::Refused(RefusalReason::DuplicateTarget {
+            target: String::from_utf8_lossy(target).into_owned(),
+            count: actual,
+            candidates: candidate_diagnostics(content, target, matches),
+        })
+    };
+
     match cardinality {
-        Cardinality::ExactlyOne if actual == 1 => Ok(()),
-        Cardinality::Exactly(expected) if actual == *expected => Ok(()),
-        Cardinality::All if actual > 0 => Ok(()),
-        Cardinality::ExactlyOne if actual == 0
-        | Cardinality::Exactly(_) if actual == 0
-        | Cardinality::All => Err(missing_target(content, target)),
-        Cardinality::Exactly(expected) if actual < *expected => {
-            Err(missing_target(content, target))
-        }
-        Cardinality::ExactlyOne | Cardinality::Exactly(_) => {
-            Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
-                target: String::from_utf8_lossy(target).into_owned(),
-                count: actual,
-                candidates: candidate_diagnostics(content, target, matches),
-            }))
-        }
+        Cardinality::ExactlyOne => match actual.cmp(&1) {
+            Ordering::Less => Err(missing_target(content, target)),
+            Ordering::Equal => Ok(()),
+            Ordering::Greater => Err(duplicate()),
+        },
+        Cardinality::Exactly(expected) => match actual.cmp(expected) {
+            Ordering::Less => Err(missing_target(content, target)),
+            Ordering::Equal => Ok(()),
+            Ordering::Greater => Err(duplicate()),
+        },
+        Cardinality::All if actual == 0 => Err(missing_target(content, target)),
+        Cardinality::All => Ok(()),
     }
 }
 
