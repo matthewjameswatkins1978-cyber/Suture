@@ -65,6 +65,7 @@ jobs:
             first=0
           done
           printf '%s\n' '  ]' '}' >> dist/release-manifest.json
+          rm -f dist/suture
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
