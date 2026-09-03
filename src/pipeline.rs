@@ -431,6 +431,16 @@ pub fn execute_transaction(
             },
         );
     }
+    let mut unique_paths = std::collections::HashSet::new();
+    let has_duplicate_path = transaction.requests.iter().any(|request| {
+        !unique_paths.insert(PathNormalizer::normalize(
+            &request.file_path,
+            &request.namespace,
+        ))
+    });
+    if has_duplicate_path {
+        return execute_single_file_transaction(workspace, transaction, dry_run);
+    }
     let mut paths = std::collections::HashSet::new();
     for request in &transaction.requests {
         let path = PathNormalizer::normalize(&request.file_path, &request.namespace);
@@ -625,6 +635,196 @@ pub fn execute_transaction(
         transaction_guarantee: "transactional_with_rollback".into(),
         refusal_reason: None,
         failure_reason: None,
+    }
+}
+
+fn execute_single_file_transaction(
+    workspace: &Workspace,
+    transaction: &TransactionRequest,
+    dry_run: bool,
+) -> TransactionCertificate {
+    let first = &transaction.requests[0];
+    if transaction
+        .requests
+        .iter()
+        .any(|request| matches!(request.operation, OperationPayload::File(_)))
+    {
+        return transaction_refusal(
+            transaction,
+            RefusalReason::UnsupportedOperation {
+                operation: "filesystem lifecycle cannot be mixed into a content transaction".into(),
+            },
+        );
+    }
+    let path = PathNormalizer::normalize(&first.file_path, &first.namespace);
+    let original = match workspace.read_file(&path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return transaction_failure(
+                transaction,
+                FailureReason::IoError {
+                    message: error.to_string(),
+                },
+            )
+        }
+    };
+    let mut current = original.clone();
+    let mut certificates = Vec::new();
+    let mut aggregate = zero_effect();
+    for request in &transaction.requests {
+        if let Some(expected) = request
+            .expected_pre_hash
+            .as_deref()
+            .filter(|hash| !hash.is_empty())
+        {
+            let expected = normalize_hash(expected);
+            let actual = compute_sha256(&current);
+            if expected != actual {
+                return transaction_refusal(
+                    transaction,
+                    RefusalReason::StaleIdentity {
+                        expected_hash: expected,
+                        actual_hash: actual,
+                    },
+                );
+            }
+        }
+        let pre_hash = compute_sha256(&current);
+        let edits = match plan_edits(&current, request) {
+            Ok(edits) => edits,
+            Err((reason, _)) => return transaction_refusal(transaction, reason),
+        };
+        let candidate = match apply_byte_edits(&current, &edits) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                return transaction_failure(
+                    transaction,
+                    FailureReason::InternalInvariant {
+                        details: error.to_string(),
+                    },
+                )
+            }
+        };
+        let effect = effect_usage(&current, &candidate, &edits, &request.budget);
+        aggregate.matches += effect.matches;
+        aggregate.changed_regions += effect.changed_regions;
+        aggregate.changed_lines += effect.changed_lines;
+        aggregate.changed_bytes += effect.changed_bytes;
+        let mut certificate = completed(
+            request,
+            &path,
+            provider_name(&request.operation),
+            pre_hash,
+            Some(compute_sha256(&candidate)),
+            if candidate == current {
+                Outcome::NoChange
+            } else {
+                Outcome::Applied
+            },
+            changed_ranges(&edits),
+            StructuralValidation::NotApplicable,
+            PreservationFacts::from_bytes(&current, &candidate),
+            CommitGuarantee {
+                mode: "dry_run".into(),
+                ..CommitGuarantee::default()
+            },
+            bounded_diff(&current, &edits).0,
+            false,
+            effect,
+        );
+        certificate.changed_line_ranges = changed_line_ranges(&current, &edits);
+        certificates.push(certificate);
+        current = candidate;
+    }
+    aggregate.files = usize::from(original != current);
+    aggregate.passed = budget_violation(&aggregate, &transaction.budget).is_none();
+    if let Some((dimension, limit, actual)) = budget_violation(&aggregate, &transaction.budget) {
+        return transaction_refusal(
+            transaction,
+            RefusalReason::EffectBudgetExceeded {
+                dimension,
+                limit,
+                actual,
+            },
+        );
+    }
+    if dry_run {
+        return TransactionCertificate {
+            protocol_version: transaction.version.clone(),
+            transaction_id: transaction.transaction_id.clone(),
+            outcome: if original == current {
+                Outcome::NoChange
+            } else {
+                Outcome::Applied
+            },
+            certificates,
+            rollback_state: "not_required".into(),
+            transaction_guarantee: "dry_run".into(),
+            refusal_reason: None,
+            failure_reason: None,
+        };
+    }
+    if original == current {
+        return TransactionCertificate {
+            protocol_version: transaction.version.clone(),
+            transaction_id: transaction.transaction_id.clone(),
+            outcome: Outcome::NoChange,
+            certificates,
+            rollback_state: "not_required".into(),
+            transaction_guarantee: "transactional_with_rollback".into(),
+            refusal_reason: None,
+            failure_reason: None,
+        };
+    }
+    let journal = Journal {
+        protocol_version: transaction.version.clone(),
+        transaction_id: transaction.transaction_id.clone(),
+        entries: vec![JournalEntry {
+            path: path.clone(),
+            pre_hash: compute_sha256(&original),
+            candidate_hash: compute_sha256(&current),
+            original,
+            candidate: current,
+        }],
+    };
+    if let Err(error) = recovery::write_journal(workspace, &journal) {
+        return transaction_failure(
+            transaction,
+            FailureReason::CommitFailure {
+                message: error.to_string(),
+            },
+        );
+    }
+    match workspace.write_file_atomic_checked(
+        &path,
+        &journal.entries[0].pre_hash,
+        &journal.entries[0].candidate,
+    ) {
+        Ok(()) => {
+            let _ = recovery::remove_journal(workspace, &transaction.transaction_id);
+            TransactionCertificate {
+                protocol_version: transaction.version.clone(),
+                transaction_id: transaction.transaction_id.clone(),
+                outcome: Outcome::Applied,
+                certificates,
+                rollback_state: "not_required".into(),
+                transaction_guarantee: "transactional_with_rollback".into(),
+                refusal_reason: None,
+                failure_reason: None,
+            }
+        }
+        Err(error) => TransactionCertificate {
+            protocol_version: transaction.version.clone(),
+            transaction_id: transaction.transaction_id.clone(),
+            outcome: Outcome::Failed,
+            certificates,
+            rollback_state: "recovery_available".into(),
+            transaction_guarantee: "transactional_with_rollback".into(),
+            refusal_reason: None,
+            failure_reason: Some(FailureReason::CommitFailure {
+                message: error.to_string(),
+            }),
+        },
     }
 }
 
