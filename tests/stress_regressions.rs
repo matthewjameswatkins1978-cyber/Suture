@@ -134,7 +134,9 @@ fn readonly_failure_leaves_no_staged_candidate_residue() {
 
     assert_eq!(certificate.outcome, Outcome::Failed);
     assert_eq!(std::fs::read(&path).unwrap(), b"old\n");
-    assert!(!entries.iter().any(|name| name.starts_with(".readonly.txt.")));
+    assert!(!entries
+        .iter()
+        .any(|name| name.starts_with(".readonly.txt.")));
 
     let mut permissions = std::fs::metadata(&path).unwrap().permissions();
     permissions.set_readonly(false);
