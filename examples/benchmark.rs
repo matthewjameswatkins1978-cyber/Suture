@@ -20,10 +20,14 @@ fn main() {
         let workspace = Workspace::new(temp.path()).unwrap();
         let request = Request {
             version: PROTOCOL_VERSION.into(),
+            request_id: String::new(),
+            allow_generated: false,
             file_path: "input.txt".into(),
             namespace: Default::default(),
             expected_pre_hash: None,
+            region_guard: None,
             cardinality: Cardinality::ExactlyOne,
+            budget: Default::default(),
             operation: OperationPayload::Text(TextOperation::Replace {
                 target: "FINDME".into(),
                 replacement: "FOUND".into(),

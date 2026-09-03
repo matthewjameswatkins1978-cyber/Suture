@@ -50,6 +50,19 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Write release manifest
+        shell: bash
+        run: |
+          printf '%s\n' '{' '  "protocol_version": "'"${GITHUB_REF_NAME#v}"'",' '  "artifacts": [' > dist/release-manifest.json
+          first=1
+          for file in dist/suture-*.*; do
+            case "$file" in *.sha256|*.json) continue;; esac
+            hash=$(sha256sum "$file" | cut -d' ' -f1)
+            [ "$first" -eq 1 ] || printf '%s\n' ',' >> dist/release-manifest.json
+            printf '    {"name":"%s","sha256":"%s"}' "$(basename "$file")" "$hash" >> dist/release-manifest.json
+            first=0
+          done
+          printf '%s\n' '  ]' '}' >> dist/release-manifest.json
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*

@@ -26,6 +26,20 @@ pub enum TomlOperation {
         path: String,
         new_key: String,
     },
+    EnsurePresent {
+        path: String,
+        value: TomlValueWrapper,
+    },
+    EnsureAbsent {
+        path: String,
+    },
+    Unset {
+        path: String,
+    },
+    Rename {
+        path: String,
+        new_key: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
@@ -113,7 +127,18 @@ impl TomlProvider {
             })
         })?;
 
-        apply_toml_operation(&mut doc, op)?;
+        if let Err(error) = apply_toml_operation(&mut doc, op) {
+            if matches!(
+                op,
+                TomlOperation::EnsureAbsent { .. } | TomlOperation::Unset { .. }
+            ) && matches!(
+                error,
+                TomlProviderError::Refused(RefusalReason::MissingTarget { .. })
+            ) {
+                return Ok(Vec::new());
+            }
+            return Err(error);
+        }
 
         let serialized_modified = doc.to_string();
         let has_trailing_newline = content.ends_with(b"\n");
@@ -190,6 +215,18 @@ fn apply_toml_operation(
             delete_toml_path(doc.as_table_mut(), &segments)?;
         }
         TomlOperation::RenameKey { path, new_key } => {
+            let segments = parse_toml_path(path)?;
+            rename_toml_path(doc.as_table_mut(), &segments, new_key)?;
+        }
+        TomlOperation::EnsurePresent { path, value } => {
+            let segments = parse_toml_path(path)?;
+            set_toml_path(doc.as_table_mut(), &segments, value)?;
+        }
+        TomlOperation::EnsureAbsent { path } | TomlOperation::Unset { path } => {
+            let segments = parse_toml_path(path)?;
+            delete_toml_path(doc.as_table_mut(), &segments)?;
+        }
+        TomlOperation::Rename { path, new_key } => {
             let segments = parse_toml_path(path)?;
             rename_toml_path(doc.as_table_mut(), &segments, new_key)?;
         }

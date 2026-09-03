@@ -10,10 +10,14 @@ use tempfile::TempDir;
 fn request(path: &str, operation: OperationPayload) -> Request {
     Request {
         version: PROTOCOL_VERSION.into(),
+        request_id: String::new(),
+        allow_generated: false,
         file_path: path.into(),
         namespace: Default::default(),
         expected_pre_hash: None,
+        region_guard: None,
         cardinality: Cardinality::ExactlyOne,
+        budget: Default::default(),
         operation,
     }
 }
