@@ -7,7 +7,8 @@ use crate::pattern::{self, PatternError};
 use crate::protocol::{
     ByteRange, Certificate, CommitGuarantee, EffectBudget, EffectUsage, FailureReason,
     MutationPlan, OperationPayload, Outcome, PreservationFacts, RefusalReason, Request,
-    StructuralValidation, TransactionCertificate, TransactionRequest, PROTOCOL_VERSION,
+    StructuralValidation, TransactionCertificate, TransactionRequest, MAX_FILE_BYTES,
+    PROTOCOL_VERSION,
 };
 use crate::provider::code::{self, CodeError, CodeOperation};
 use crate::provider::dotenv::{self, DotenvError};
@@ -87,6 +88,19 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
         Ok(b) => b,
         Err(e) => return workspace_error(request, &file_path, provider, e),
     };
+    if original.len() > MAX_FILE_BYTES {
+        return refusal(
+            request,
+            &file_path,
+            provider,
+            RefusalReason::ResourceLimitExceeded {
+                dimension: "max_file_bytes".into(),
+                limit: MAX_FILE_BYTES,
+                actual: original.len(),
+            },
+            String::new(),
+        );
+    }
     let pre_hash = compute_sha256(&original);
     if let Some(expected) = request
         .expected_pre_hash
@@ -675,6 +689,16 @@ fn execute_single_file_transaction(
             )
         }
     };
+    if original.len() > MAX_FILE_BYTES {
+        return transaction_refusal(
+            transaction,
+            RefusalReason::ResourceLimitExceeded {
+                dimension: "max_file_bytes".into(),
+                limit: MAX_FILE_BYTES,
+                actual: original.len(),
+            },
+        );
+    }
     let mut current = original.clone();
     let mut certificates = Vec::new();
     let mut aggregate = zero_effect();
@@ -774,6 +798,16 @@ fn execute_single_file_transaction(
                 )
             }
         };
+        if candidate.len() > MAX_FILE_BYTES {
+            return transaction_refusal(
+                transaction,
+                RefusalReason::ResourceLimitExceeded {
+                    dimension: "max_file_bytes".into(),
+                    limit: MAX_FILE_BYTES,
+                    actual: candidate.len(),
+                },
+            );
+        }
         let structural = match validate_candidate(request, &candidate) {
             Ok(validation) => validation,
             Err(reason) => return transaction_failure(transaction, reason),
@@ -1194,6 +1228,19 @@ fn execute_file_operation(
             expected_absent,
             content,
         } => {
+            if content.len() > MAX_FILE_BYTES {
+                return refusal(
+                    request,
+                    file_path,
+                    provider,
+                    RefusalReason::ResourceLimitExceeded {
+                        dimension: "max_file_bytes".into(),
+                        limit: MAX_FILE_BYTES,
+                        actual: content.len(),
+                    },
+                    String::new(),
+                );
+            }
             if !expected_absent {
                 return refusal(
                     request,
@@ -1235,6 +1282,19 @@ fn execute_file_operation(
                 Ok(x) => x,
                 Err(e) => return workspace_error(request, file_path, provider, e),
             };
+            if original.len() > MAX_FILE_BYTES {
+                return refusal(
+                    request,
+                    file_path,
+                    provider,
+                    RefusalReason::ResourceLimitExceeded {
+                        dimension: "max_file_bytes".into(),
+                        limit: MAX_FILE_BYTES,
+                        actual: original.len(),
+                    },
+                    String::new(),
+                );
+            }
             let pre = compute_sha256(&original);
             if normalize_hash(expected_hash) != pre {
                 return refusal(
@@ -1275,6 +1335,19 @@ fn execute_file_operation(
                 Ok(x) => x,
                 Err(e) => return workspace_error(request, file_path, provider, e),
             };
+            if original.len() > MAX_FILE_BYTES {
+                return refusal(
+                    request,
+                    file_path,
+                    provider,
+                    RefusalReason::ResourceLimitExceeded {
+                        dimension: "max_file_bytes".into(),
+                        limit: MAX_FILE_BYTES,
+                        actual: original.len(),
+                    },
+                    String::new(),
+                );
+            }
             let pre = compute_sha256(&original);
             if normalize_hash(expected_source_hash) != pre {
                 return refusal(
@@ -1397,6 +1470,60 @@ fn execute_file_operation(
                     },
                 ),
             };
+        }
+    }
+    if !dry_run {
+        let verification = match operation {
+            FileOperation::CreateFile { content, .. } => match workspace.read_file(file_path) {
+                Ok(landed) if landed == *content => Ok(()),
+                Ok(landed) => Err(compute_sha256(&landed)),
+                Err(error) => Err(format!("read failed: {error}")),
+            },
+            FileOperation::DeleteFile { .. } => match workspace.read_file(file_path) {
+                Err(WorkspaceError::NotFound(_)) => Ok(()),
+                Ok(landed) => Err(compute_sha256(&landed)),
+                Err(error) => Err(format!("delete verification failed: {error}")),
+            },
+            FileOperation::RenameFile { destination, .. }
+            | FileOperation::MoveFile { destination, .. } => {
+                let destination_path =
+                    match workspace.resolve_namespaced_path(destination, &request.namespace) {
+                        Ok(path) => path,
+                        Err(error) => {
+                            return failure(
+                                request,
+                                file_path,
+                                provider,
+                                pre_hash,
+                                FailureReason::PostCommitVerificationFailure {
+                                    expected_hash: post_hash.clone().unwrap_or_default(),
+                                    actual_hash: format!("destination resolution failed: {error}"),
+                                },
+                            )
+                        }
+                    };
+                match workspace.read_file(destination_path) {
+                    Ok(landed)
+                        if compute_sha256(&landed) == post_hash.clone().unwrap_or_default() =>
+                    {
+                        Ok(())
+                    }
+                    Ok(landed) => Err(compute_sha256(&landed)),
+                    Err(error) => Err(format!("read failed: {error}")),
+                }
+            }
+        };
+        if let Err(actual_hash) = verification {
+            return failure(
+                request,
+                file_path,
+                provider,
+                pre_hash,
+                FailureReason::PostCommitVerificationFailure {
+                    expected_hash: post_hash.unwrap_or_else(|| "absent".into()),
+                    actual_hash,
+                },
+            );
         }
     }
     let commit = if dry_run {

@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::engine::ByteEdit;
-use crate::protocol::{Cardinality, RefusalReason};
+use crate::protocol::{Cardinality, RefusalReason, MAX_FILE_BYTES};
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -37,10 +37,14 @@ pub fn plan(
     op: &PatternOperation,
     cardinality: &Cardinality,
 ) -> Result<Vec<ByteEdit>, PatternError> {
-    if content.len() > 64 * 1024 * 1024 {
-        return Err(PatternError::Refused(RefusalReason::Custom {
-            message: "pattern provider file limit exceeded".into(),
-        }));
+    if content.len() > MAX_FILE_BYTES {
+        return Err(PatternError::Refused(
+            RefusalReason::ResourceLimitExceeded {
+                dimension: "max_file_bytes".into(),
+                limit: MAX_FILE_BYTES,
+                actual: content.len(),
+            },
+        ));
     }
     let pattern = match op {
         PatternOperation::Replace { pattern, .. }
@@ -48,8 +52,16 @@ pub fn plan(
         | PatternOperation::EnsureAbsent { pattern } => pattern,
     };
     if pattern.is_empty() || pattern.len() > MAX_PATTERN_BYTES {
-        return Err(PatternError::Refused(RefusalReason::Custom {
-            message: "pattern must be non-empty and at most 8192 UTF-8 bytes".into(),
+        return Err(PatternError::Refused(if pattern.is_empty() {
+            RefusalReason::MissingTarget {
+                target: "empty pattern".into(),
+            }
+        } else {
+            RefusalReason::ResourceLimitExceeded {
+                dimension: "max_pattern_bytes".into(),
+                limit: MAX_PATTERN_BYTES,
+                actual: pattern.len(),
+            }
         }));
     }
     let re = Regex::new(pattern).map_err(|e| {

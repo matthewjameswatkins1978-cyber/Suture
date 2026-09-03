@@ -9,7 +9,8 @@ use crate::lifecycle::FileOperation;
 use crate::path::PathNamespace;
 use crate::pattern::PatternOperation;
 use crate::protocol::{
-    Cardinality, EffectBudget, OperationPayload, Request, TransactionRequest, PROTOCOL_VERSION,
+    Cardinality, EffectBudget, OperationPayload, Request, TransactionRequest, MAX_FILE_BYTES,
+    MAX_REQUEST_BYTES, PROTOCOL_VERSION,
 };
 use crate::provider::code::CodeOperation;
 use crate::provider::dotenv::DotenvOperation;
@@ -573,6 +574,14 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
         ["suggest", "preview"]
     );
     reason!(
+        "RESOURCE_LIMIT_EXCEEDED",
+        "The request or observed file exceeds a built-in safety limit.",
+        "Suture bounds parser and memory exposure before mutation.",
+        "reduce_input_or_split_work",
+        false,
+        ["capabilities", "inspect"]
+    );
+    reason!(
         "WORKSPACE_ESCAPE",
         "The path or scope leaves the workspace.",
         "Suture only mutates confined workspace state.",
@@ -768,7 +777,7 @@ pub fn capabilities() -> CapabilityManifest {
         "path_namespaces": ["native", "windows", "wsl", "posix"],
         "code_languages": ["javascript", "typescript", "jsx", "tsx", "python", "rust", "go"],
         "transaction_capabilities": {"single_file": true, "multi_file": true, "rollback": true, "crash_recovery": true},
-        "resource_limits": {"max_request_bytes": 1048576, "max_diagnostic_bytes": 4096, "max_pattern_bytes": 8192, "max_file_bytes": 67108864},
+        "resource_limits": {"max_request_bytes": MAX_REQUEST_BYTES, "max_diagnostic_bytes": 4096, "max_pattern_bytes": 8192, "max_file_bytes": MAX_FILE_BYTES},
         "effect_budget_dimensions": ["max_files", "max_matches", "max_changed_regions", "max_changed_lines", "max_changed_bytes", "allowed_path_prefixes"],
         "reason_codes": reason_codes
     });
@@ -819,10 +828,10 @@ pub fn capabilities() -> CapabilityManifest {
             crash_recovery: true,
         },
         resource_limits: ResourceLimits {
-            max_request_bytes: 1_048_576,
+            max_request_bytes: MAX_REQUEST_BYTES,
             max_diagnostic_bytes: 4_096,
             max_pattern_bytes: 8_192,
-            max_file_bytes: 64 * 1024 * 1024,
+            max_file_bytes: MAX_FILE_BYTES,
         },
         effect_budget_dimensions: vec![
             "max_files",

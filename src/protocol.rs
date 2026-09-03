@@ -13,6 +13,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: &str = "1.1.0";
+pub const MAX_REQUEST_BYTES: usize = 1_048_576;
+pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(
@@ -181,6 +183,11 @@ pub enum RefusalReason {
         limit: usize,
         actual: usize,
     },
+    ResourceLimitExceeded {
+        dimension: String,
+        limit: usize,
+        actual: usize,
+    },
     GeneratedFileRequiresOptIn {
         marker: String,
     },
@@ -212,6 +219,7 @@ impl RefusalReason {
             Self::UnsupportedProtocolVersion { .. } => "PROTOCOL_UNSUPPORTED",
             Self::Custom { .. } => "REFUSED",
             Self::EffectBudgetExceeded { .. } => "EFFECT_BUDGET_EXCEEDED",
+            Self::ResourceLimitExceeded { .. } => "RESOURCE_LIMIT_EXCEEDED",
             Self::GeneratedFileRequiresOptIn { .. } => "GENERATED_FILE_REQUIRES_OPT_IN",
             Self::BinaryInput => "BINARY_INPUT",
             Self::DestinationExists { .. } => "DESTINATION_EXISTS",

@@ -14,6 +14,6 @@ fn exported_protocol_schema_has_a_golden_digest() {
     let digest = suture::engine::compute_sha256(format!("{rendered}\n").as_bytes());
     assert_eq!(
         digest,
-        "73105d663b27b3849213ce739eb58ad8c99ec157e963b917b9a7ae53e1fc7005"
+        "53bc96200535978cb262ea68695f5d69a5d77753e947e8ea01649954dcff0164"
     );
 }
