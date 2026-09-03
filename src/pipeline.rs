@@ -1826,6 +1826,21 @@ fn workspace_error(r: &Request, path: &str, provider: &str, e: WorkspaceError) -
             RefusalReason::UnmappablePath { path: path.clone() },
             String::new(),
         ),
+        WorkspaceError::ResourceLimit {
+            dimension,
+            limit,
+            actual,
+        } => refusal(
+            r,
+            path,
+            provider,
+            RefusalReason::ResourceLimitExceeded {
+                dimension,
+                limit,
+                actual,
+            },
+            String::new(),
+        ),
     }
 }
 
@@ -1840,6 +1855,15 @@ fn workspace_reason(error: WorkspaceError) -> RefusalReason {
         },
         WorkspaceError::AlreadyExists(path) => RefusalReason::DestinationExists { path },
         WorkspaceError::UnmappablePath(path) => RefusalReason::UnmappablePath { path },
+        WorkspaceError::ResourceLimit {
+            dimension,
+            limit,
+            actual,
+        } => RefusalReason::ResourceLimitExceeded {
+            dimension,
+            limit,
+            actual,
+        },
         WorkspaceError::Io(error) => RefusalReason::Custom {
             message: format!("workspace I/O error: {error}"),
         },

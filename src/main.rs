@@ -9,8 +9,8 @@ use suture::{
     pipeline::execute_request,
     protocol::{
         Certificate, CommitGuarantee, EffectBudget, EffectUsage, FailureReason, Outcome,
-        PreservationFacts, RefusalReason, Request, StructuralValidation, TransactionRequest,
-        MAX_REQUEST_BYTES, PROTOCOL_VERSION,
+        PreservationFacts, RefusalReason, Request, StructuralValidation, TransactionCertificate,
+        TransactionRequest, MAX_REQUEST_BYTES, PROTOCOL_VERSION,
     },
     workspace::Workspace,
 };
@@ -55,19 +55,26 @@ fn print_explain(code: &str, json_output: bool) {
 fn read_json_argument(args: &[String]) -> String {
     if let Some(index) = args.iter().position(|arg| arg == "--request") {
         if let Some(path) = args.get(index + 1) {
-            return match fs::read_to_string(path) {
+            return match read_request_input(Some(path)) {
                 Ok(value) => value,
-                Err(error) => {
+                Err(RequestInputError::TooLarge(actual)) => {
+                    eprintln!("input exceeds {MAX_REQUEST_BYTES} bytes (actual: {actual})");
+                    std::process::exit(2);
+                }
+                Err(RequestInputError::Io(error)) => {
                     eprintln!("request read failed: {error}");
                     std::process::exit(3);
                 }
             };
         }
     }
-    let mut input = String::new();
-    match io::stdin().read_to_string(&mut input) {
-        Ok(_) => input,
-        Err(error) => {
+    match read_request_input(None) {
+        Ok(value) => value,
+        Err(RequestInputError::TooLarge(actual)) => {
+            eprintln!("input exceeds {MAX_REQUEST_BYTES} bytes (actual: {actual})");
+            std::process::exit(2);
+        }
+        Err(RequestInputError::Io(error)) => {
             eprintln!("request read failed: {error}");
             std::process::exit(3);
         }
@@ -84,6 +91,29 @@ fn option_value(args: &[String], flag: &str) -> Option<String> {
         .and_then(|index| args.get(index + 1))
         .cloned()
 }
+
+enum RequestInputError {
+    Io(io::Error),
+    TooLarge(usize),
+}
+
+fn read_request_input(path: Option<&str>) -> Result<String, RequestInputError> {
+    let mut bytes = Vec::new();
+    let reader: Box<dyn Read> = match path {
+        Some(path) => Box::new(fs::File::open(path).map_err(RequestInputError::Io)?),
+        None => Box::new(io::stdin()),
+    };
+    reader
+        .take((MAX_REQUEST_BYTES as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(RequestInputError::Io)?;
+    if bytes.len() > MAX_REQUEST_BYTES {
+        return Err(RequestInputError::TooLarge(bytes.len()));
+    }
+    String::from_utf8(bytes)
+        .map_err(|error| RequestInputError::Io(io::Error::new(io::ErrorKind::InvalidData, error)))
+}
+
 fn empty_cert(reason: RefusalReason) -> Certificate {
     let reason_code = reason.code().into();
     Certificate {
@@ -121,6 +151,20 @@ fn empty_cert(reason: RefusalReason) -> Certificate {
         recovery_state: "not_required".into(),
     }
 }
+
+fn empty_transaction_certificate(reason: RefusalReason) -> TransactionCertificate {
+    TransactionCertificate {
+        protocol_version: PROTOCOL_VERSION.into(),
+        transaction_id: String::new(),
+        outcome: Outcome::Refused,
+        certificates: Vec::new(),
+        rollback_state: "not_started".into(),
+        transaction_guarantee: "not_committed".into(),
+        refusal_reason: Some(reason.clone()),
+        failure_reason: None,
+        reason_code: Some(reason.code().into()),
+    }
+}
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.get(1).is_some_and(|x| x == "--version" || x == "-V") {
@@ -146,33 +190,27 @@ fn main() {
                 .windows(2)
                 .find(|w| w[0] == "--request")
                 .map(|w| w[1].clone());
-            let mut input = String::new();
-            let read = if let Some(p) = request_path {
-                fs::read_to_string(p)
-            } else {
-                io::stdin().read_to_string(&mut input).map(|_| input)
-            };
-            let input = match read {
+            let input = match read_request_input(request_path.as_deref()) {
                 Ok(s) => s,
-                Err(e) => {
-                    eprintln!("request read failed: {e}");
+                Err(RequestInputError::TooLarge(actual)) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&empty_cert(
+                            RefusalReason::ResourceLimitExceeded {
+                                dimension: "max_request_bytes".into(),
+                                limit: MAX_REQUEST_BYTES,
+                                actual,
+                            },
+                        ))
+                        .unwrap()
+                    );
+                    std::process::exit(2)
+                }
+                Err(RequestInputError::Io(error)) => {
+                    eprintln!("request read failed: {error}");
                     std::process::exit(3)
                 }
             };
-            if input.len() > MAX_REQUEST_BYTES {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&empty_cert(
-                        RefusalReason::ResourceLimitExceeded {
-                            dimension: "max_request_bytes".into(),
-                            limit: MAX_REQUEST_BYTES,
-                            actual: input.len(),
-                        },
-                    ))
-                    .unwrap()
-                );
-                std::process::exit(2);
-            }
             let req: Request = match serde_json::from_str(&input) {
                 Ok(r) => r,
                 Err(e) => {
@@ -214,27 +252,39 @@ fn main() {
                 .windows(2)
                 .find(|w| w[0] == "--request")
                 .map(|w| w[1].clone());
-            let mut input = String::new();
-            let read = if let Some(p) = request_path {
-                fs::read_to_string(p)
-            } else {
-                io::stdin().read_to_string(&mut input).map(|_| input)
-            };
-            let input = match read {
+            let input = match read_request_input(request_path.as_deref()) {
                 Ok(s) => s,
-                Err(e) => {
-                    eprintln!("request read failed: {e}");
+                Err(RequestInputError::TooLarge(actual)) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&empty_transaction_certificate(
+                            RefusalReason::ResourceLimitExceeded {
+                                dimension: "max_request_bytes".into(),
+                                limit: MAX_REQUEST_BYTES,
+                                actual,
+                            },
+                        ))
+                        .unwrap()
+                    );
+                    std::process::exit(2)
+                }
+                Err(RequestInputError::Io(error)) => {
+                    eprintln!("request read failed: {error}");
                     std::process::exit(3);
                 }
             };
-            if input.len() > MAX_REQUEST_BYTES {
-                eprintln!("transaction request exceeds {MAX_REQUEST_BYTES} bytes");
-                std::process::exit(2);
-            }
             let transaction: TransactionRequest = match serde_json::from_str(&input) {
                 Ok(x) => x,
                 Err(e) => {
-                    eprintln!("transaction request parse failed: {e}");
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&empty_transaction_certificate(
+                            RefusalReason::MalformedInput {
+                                details: format!("transaction request parse failed: {e}"),
+                            },
+                        ))
+                        .unwrap()
+                    );
                     std::process::exit(2);
                 }
             };
@@ -321,10 +371,19 @@ fn main() {
                 let input = if source == "-" {
                     read_json_argument(&[])
                 } else {
-                    fs::read_to_string(source).unwrap_or_else(|error| {
-                        eprintln!("refusal certificate read failed: {error}");
-                        std::process::exit(3);
-                    })
+                    match read_request_input(Some(&source)) {
+                        Ok(input) => input,
+                        Err(RequestInputError::TooLarge(actual)) => {
+                            eprintln!(
+                                "refusal certificate exceeds {MAX_REQUEST_BYTES} bytes (actual: {actual})"
+                            );
+                            std::process::exit(2);
+                        }
+                        Err(RequestInputError::Io(error)) => {
+                            eprintln!("refusal certificate read failed: {error}");
+                            std::process::exit(3);
+                        }
+                    }
                 };
                 let certificate: Certificate =
                     serde_json::from_str(&input).unwrap_or_else(|error| {
@@ -431,21 +490,30 @@ fn run_mcp() {
             return;
         }
     };
-    for line in io::stdin().lock().lines().map_while(Result::ok) {
-        if line.len() > MAX_REQUEST_BYTES {
-            println!(
-                "{}",
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": serde_json::Value::Null,
-                    "error": {
-                        "code": -32600,
-                        "message": format!("request exceeds {MAX_REQUEST_BYTES} bytes")
-                    }
-                })
-            );
-            continue;
-        }
+    let mut input = io::stdin().lock();
+    loop {
+        let line = match read_mcp_line(&mut input) {
+            Ok(Some(Ok(line))) => line,
+            Ok(Some(Err(actual))) => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": serde_json::Value::Null,
+                        "error": {
+                            "code": -32600,
+                            "message": format!("request exceeds {MAX_REQUEST_BYTES} bytes (actual: {actual})")
+                        }
+                    })
+                );
+                continue;
+            }
+            Ok(None) => break,
+            Err(error) => {
+                eprintln!("MCP input read failed: {error}");
+                break;
+            }
+        };
         let request: serde_json::Value = match serde_json::from_str(&line) {
             Ok(x) => x,
             Err(_) => continue,
@@ -502,6 +570,53 @@ fn run_mcp() {
             serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})
         );
     }
+}
+
+fn read_mcp_line(reader: &mut impl BufRead) -> io::Result<Option<Result<String, usize>>> {
+    let mut bytes = Vec::new();
+    let mut actual = 0usize;
+    loop {
+        let (content_len, available_len) = {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                if actual == 0 && bytes.is_empty() {
+                    return Ok(None);
+                }
+                break;
+            }
+            let content_len = available
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .unwrap_or(available.len());
+            actual = actual.saturating_add(content_len);
+            if bytes.len() <= MAX_REQUEST_BYTES {
+                let room = MAX_REQUEST_BYTES
+                    .saturating_add(1)
+                    .saturating_sub(bytes.len());
+                bytes.extend_from_slice(&available[..content_len.min(room)]);
+            }
+            (content_len, available.len())
+        };
+        let consumed = if content_len < available_len {
+            content_len + 1
+        } else {
+            content_len
+        };
+        reader.consume(consumed);
+        if content_len < available_len {
+            break;
+        }
+    }
+    if bytes.last() == Some(&b'\r') {
+        bytes.pop();
+        actual = actual.saturating_sub(1);
+    }
+    if actual > MAX_REQUEST_BYTES {
+        return Ok(Some(Err(actual)));
+    }
+    String::from_utf8(bytes)
+        .map(|line| Some(Ok(line)))
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 #[allow(dead_code)]
