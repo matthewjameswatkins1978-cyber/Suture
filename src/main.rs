@@ -15,8 +15,10 @@ use suture::{
     workspace::Workspace,
 };
 
+const SUTURE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn help() {
-    println!("suture {PROTOCOL_VERSION} - deterministic mutation of existing workspace state\n\nSuture changes exactly the state a request authorizes, refuses ambiguity, and returns a certificate. It is not Git, a build/test runner, a formatter, a shell, or an online service.\n\nCOMMANDS");
+    println!("suture {SUTURE_VERSION} (protocol {PROTOCOL_VERSION}) - deterministic mutation of existing workspace state\n\nSuture changes exactly the state a request authorizes, refuses ambiguity, and returns a certificate. It is not Git, a build/test runner, a formatter, a shell, or an online service.\n\nCOMMANDS");
     for (name, description) in suture::metadata::commands() {
         println!("  {name:<14} {description}");
     }
@@ -168,7 +170,7 @@ fn empty_transaction_certificate(reason: RefusalReason) -> TransactionCertificat
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.get(1).is_some_and(|x| x == "--version" || x == "-V") {
-        println!("suture {PROTOCOL_VERSION}");
+        println!("suture {SUTURE_VERSION}");
         return;
     }
     if args.get(1).is_some_and(|x| x == "--help" || x == "-h") {
@@ -466,7 +468,7 @@ fn main() {
                 .map(|provider| provider.name)
                 .collect::<Vec<_>>()
                 .join(" ");
-            println!("suture doctor\nos: {}\narch: {}\nworkspace: {}\nprotocol: {}\nproviders: {}\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available",env::consts::OS,env::consts::ARCH,match Workspace::new(root){Ok(_)=>"ready",Err(_)=>"unavailable"}, PROTOCOL_VERSION, providers);
+            println!("suture doctor\nversion: {SUTURE_VERSION}\nos: {}\narch: {}\nworkspace: {}\nprotocol: {}\nproviders: {}\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available",env::consts::OS,env::consts::ARCH,match Workspace::new(root){Ok(_)=>"ready",Err(_)=>"unavailable"}, PROTOCOL_VERSION, providers);
         }
         _ => {
             eprintln!("unknown command: {command}");
@@ -524,7 +526,7 @@ fn run_mcp() {
             .unwrap_or(serde_json::Value::Null);
         let result = match request.get("method").and_then(|x| x.as_str()).unwrap_or("") {
             "initialize" => {
-                serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "suture", "version": PROTOCOL_VERSION}})
+                serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "suture", "version": SUTURE_VERSION, "protocol_version": PROTOCOL_VERSION}})
             }
             "tools/list" => serde_json::json!({"tools": [
                 {"name": "suture_mutate", "description": "Apply one typed Suture mutation and return its certificate", "inputSchema": schema_for!(Request)},
