@@ -92,6 +92,7 @@ pub struct CapabilityManifest {
     pub encodings: Vec<&'static str>,
     pub path_namespaces: Vec<&'static str>,
     pub code_languages: Vec<&'static str>,
+    pub guard_modes: Vec<&'static str>,
     pub transaction_capabilities: TransactionCapabilities,
     pub resource_limits: ResourceLimits,
     pub effect_budget_dimensions: Vec<&'static str>,
@@ -813,6 +814,7 @@ pub fn capabilities() -> CapabilityManifest {
         "encodings": ["utf8", "utf8_bom"],
         "path_namespaces": ["native", "windows", "wsl", "posix"],
         "code_languages": ["javascript", "typescript", "jsx", "tsx", "python", "rust", "go"],
+        "guard_modes": ["immediate", "strict_snapshot", "region_snapshot", "structural_snapshot"],
         "transaction_capabilities": {"single_file": true, "multi_file": true, "rollback": true, "crash_recovery": true},
         "resource_limits": {"max_request_bytes": MAX_REQUEST_BYTES, "max_transaction_requests": MAX_TRANSACTION_REQUESTS, "max_diagnostic_bytes": 4096, "max_pattern_bytes": 8192, "max_file_bytes": MAX_FILE_BYTES},
         "effect_budget_dimensions": ["max_files", "max_matches", "max_changed_regions", "max_changed_lines", "max_changed_bytes", "allowed_path_prefixes"],
@@ -857,6 +859,12 @@ pub fn capabilities() -> CapabilityManifest {
             "python",
             "rust",
             "go",
+        ],
+        guard_modes: vec![
+            "immediate",
+            "strict_snapshot",
+            "region_snapshot",
+            "structural_snapshot",
         ],
         transaction_capabilities: TransactionCapabilities {
             single_file: true,
