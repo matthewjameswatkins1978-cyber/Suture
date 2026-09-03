@@ -521,8 +521,8 @@ pub fn execute_transaction(
     if transaction.requests.is_empty() {
         return transaction_refusal(
             transaction,
-            RefusalReason::Custom {
-                message: "transaction must contain at least one request".into(),
+            RefusalReason::MalformedInput {
+                details: "transaction must contain at least one request".into(),
             },
         );
     }
@@ -555,7 +555,7 @@ pub fn execute_transaction(
         if !paths.insert(path.clone()) {
             return transaction_refusal(
                 transaction,
-                RefusalReason::Custom { message: format!("multiple operations for {path} require a single-file operation batch; refusing ambiguous transaction ordering") },
+                RefusalReason::TransactionConflict { message: format!("multiple operations for {path} require a single-file operation batch; refusing ambiguous transaction ordering") },
             );
         }
     }

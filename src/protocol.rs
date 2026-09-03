@@ -176,6 +176,9 @@ pub enum RefusalReason {
         requested: String,
         supported: String,
     },
+    TransactionConflict {
+        message: String,
+    },
     Custom {
         message: String,
     },
@@ -218,6 +221,7 @@ impl RefusalReason {
             Self::LossyOperationRequiresOptIn { .. } => "LOSSY_OPERATION_REQUIRES_OPT_IN",
             Self::UnsupportedOperation { .. } => "OPERATION_UNSUPPORTED",
             Self::UnsupportedProtocolVersion { .. } => "PROTOCOL_UNSUPPORTED",
+            Self::TransactionConflict { .. } => "TRANSACTION_CONFLICT",
             Self::Custom { .. } => "REFUSED",
             Self::EffectBudgetExceeded { .. } => "EFFECT_BUDGET_EXCEEDED",
             Self::ResourceLimitExceeded { .. } => "RESOURCE_LIMIT_EXCEEDED",
