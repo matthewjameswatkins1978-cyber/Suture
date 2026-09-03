@@ -1,6 +1,13 @@
-# Suture optimisation / idiomatic Rust pass 1
+# Threadmoth optimisation / idiomatic Rust pass 1
 
-Working branch for the first performance and idiomatic-Rust pass.
+Threadmoth is the new public identity of the project previously called Suture. The behavioural contract and safety thesis are unchanged.
+
+Canonical executable: `threadmoth`.
+Convenience alias where practical: `thm`.
+
+`threadmoth` is the compatibility contract. `thm` is not. The source-file extension remains undecided and must not be inferred from the alias.
+
+Working branch for the first performance, stress-hardening, and idiomatic-Rust pass.
 
 Planned changes:
 
@@ -9,8 +16,10 @@ Planned changes:
 - preallocate exact output capacity in the byte-edit engine;
 - avoid computing a redundant post-commit SHA-256 on the success path;
 - remove the unconditional general-purpose line diff from effect accounting only after equivalence tests prove an edit-derived implementation matches existing semantics;
-- add a regression test for empty replacement handling in text `set`/`rename` paths;
+- preserve the stress-test fixes as permanent regressions, including clean failed commits and clean successful transaction recovery state;
+- add regression coverage for empty replacement handling in text `set`/`rename` paths;
 - preserve all safety, cardinality, refusal, transaction, and certificate semantics;
-- run `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, the full test suite, and the frozen torture suite before merge.
+- run `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, the full test suite, and the frozen torture suite before merge;
+- perform the broad Suture -> Threadmoth crate/binary/docs/release rename as a controlled mechanical pass, not mixed into semantics-sensitive refactors.
 
 The branch is intentionally isolated from `main` until those checks pass.
