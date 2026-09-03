@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
-use crate::protocol::{Cardinality, RefusalReason};
+use crate::engine::{compute_sha256, ByteEdit};
+use crate::protocol::{Candidate, Cardinality, RefusalReason};
+use memchr::{memchr_iter, memmem};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -30,82 +32,75 @@ pub enum TextProviderError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextProviderResult {
-    pub edits: Vec<crate::engine::ByteEdit>,
+    pub edits: Vec<ByteEdit>,
     pub original_bytes: Vec<u8>,
     pub modified_bytes: Vec<u8>,
 }
 
 pub struct TextProvider;
 
+#[derive(Clone, Copy)]
+enum Placement {
+    Replace,
+    Before,
+    After,
+}
+
 impl TextProvider {
     pub fn plan(
         content: &[u8],
         op: &TextOperation,
         cardinality: &Cardinality,
-    ) -> Result<Vec<crate::engine::ByteEdit>, TextProviderError> {
-        if let TextOperation::EnsurePresent { content: wanted } = op {
-            if wanted.is_empty() {
-                return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
-                    target: "empty ensure_present content".into(),
-                }));
+    ) -> Result<Vec<ByteEdit>, TextProviderError> {
+        match op {
+            TextOperation::EnsurePresent { content: wanted } => {
+                return plan_ensure_present(content, wanted)
             }
-            if content
-                .windows(wanted.len())
-                .any(|w| w == wanted.as_bytes())
-            {
-                return Ok(Vec::new());
+            TextOperation::Move { target, before } => {
+                return plan_move(content, target, before, cardinality)
             }
-            let newline = if content.windows(2).any(|w| w == b"\r\n") {
-                b"\r\n".as_slice()
-            } else {
-                b"\n".as_slice()
-            };
-            let mut replacement = Vec::new();
-            if !content.is_empty() && !content.ends_with(b"\n") {
-                replacement.extend_from_slice(newline);
-            }
-            replacement.extend_from_slice(wanted.as_bytes());
-            if content.ends_with(b"\n") {
-                replacement.extend_from_slice(newline);
-            }
-            return Ok(vec![crate::engine::ByteEdit {
-                start: content.len(),
-                end: content.len(),
-                replacement,
-            }]);
+            _ => {}
         }
-        if let TextOperation::Move { target, before } = op {
-            return plan_move(content, target, before, cardinality);
-        }
-        let (target, _is_delete, replacement_bytes, is_insert_before, is_insert_after) = match op {
+
+        let (target, replacement, placement, desired_absence, set_like) = match op {
             TextOperation::Replace {
                 target,
                 replacement,
             } => (
                 target.as_bytes(),
-                false,
-                replacement.as_bytes().to_vec(),
+                replacement.as_bytes(),
+                Placement::Replace,
                 false,
                 false,
             ),
-            TextOperation::Delete { target } => (target.as_bytes(), true, Vec::new(), false, false),
+            TextOperation::Delete { target } => (
+                target.as_bytes(),
+                &[][..],
+                Placement::Replace,
+                false,
+                false,
+            ),
             TextOperation::InsertBefore { target, content } => (
                 target.as_bytes(),
+                content.as_bytes(),
+                Placement::Before,
                 false,
-                content.as_bytes().to_vec(),
-                true,
                 false,
             ),
             TextOperation::InsertAfter { target, content } => (
                 target.as_bytes(),
+                content.as_bytes(),
+                Placement::After,
                 false,
-                content.as_bytes().to_vec(),
                 false,
-                true,
             ),
-            TextOperation::EnsureAbsent { target } | TextOperation::Unset { target } => {
-                (target.as_bytes(), true, Vec::new(), false, false)
-            }
+            TextOperation::EnsureAbsent { target } | TextOperation::Unset { target } => (
+                target.as_bytes(),
+                &[][..],
+                Placement::Replace,
+                true,
+                false,
+            ),
             TextOperation::Set {
                 target,
                 replacement,
@@ -115,10 +110,10 @@ impl TextProvider {
                 replacement,
             } => (
                 target.as_bytes(),
+                replacement.as_bytes(),
+                Placement::Replace,
                 false,
-                replacement.as_bytes().to_vec(),
-                false,
-                false,
+                true,
             ),
             TextOperation::Move { .. } | TextOperation::EnsurePresent { .. } => unreachable!(),
         };
@@ -129,140 +124,134 @@ impl TextProvider {
             }));
         }
 
-        // Find all non-overlapping matches of target in content
-        let mut matches = Vec::new();
-        let mut search_idx = 0;
-        while search_idx <= content.len() {
-            if search_idx + target.len() > content.len() {
-                break;
-            }
-            if &content[search_idx..search_idx + target.len()] == target {
-                matches.push(search_idx);
-                search_idx += target.len(); // non-overlapping advance
-            } else {
-                search_idx += 1;
-            }
-        }
-
+        let matches = find_matches(content, target);
         let match_count = matches.len();
 
-        if matches!(
-            op,
-            TextOperation::EnsureAbsent { .. } | TextOperation::Unset { .. }
-        ) && match_count == 0
+        if desired_absence && match_count == 0 {
+            return Ok(Vec::new());
+        }
+
+        // For desired-state set/rename operations, an already-present non-empty
+        // replacement is a safe no-op. An empty replacement is not treated as
+        // "present everywhere": without the target we cannot establish the
+        // requested state, so normal missing-target refusal applies.
+        if set_like
+            && match_count == 0
+            && !replacement.is_empty()
+            && memmem::find(content, replacement).is_some()
         {
             return Ok(Vec::new());
         }
-        if matches!(op, TextOperation::Set { .. } | TextOperation::Rename { .. })
-            && match_count == 0
-        {
-            let replacement_present = content
-                .windows(replacement_bytes.len())
-                .any(|w| w == replacement_bytes.as_slice());
-            if replacement_present {
-                return Ok(Vec::new());
-            }
-        }
 
-        // Enforce cardinality
-        match cardinality {
-            Cardinality::ExactlyOne => {
-                if matches!(
-                    op,
-                    TextOperation::EnsureAbsent { .. } | TextOperation::Unset { .. }
-                ) {
-                    // Desired-state absence is deliberately idempotent and removes every match.
-                } else {
-                    if match_count == 0 {
-                        let near_miss = diagnose_near_miss(content, target);
-                        return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
-                            target: near_miss,
-                        }));
-                    } else if match_count > 1 {
-                        return Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
-                            target: String::from_utf8_lossy(target).to_string(),
-                            count: match_count,
-                            candidates: candidate_diagnostics(content, target, &matches),
-                        }));
-                    }
-                }
-            }
-            Cardinality::Exactly(n) => {
-                if matches!(
-                    op,
-                    TextOperation::EnsureAbsent { .. } | TextOperation::Unset { .. }
-                ) {
-                    // Desired-state absence is deliberately idempotent and removes every match.
-                } else {
-                    if match_count < *n {
-                        let near_miss = diagnose_near_miss(content, target);
-                        return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
-                            target: near_miss,
-                        }));
-                    } else if match_count > *n {
-                        return Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
-                            target: String::from_utf8_lossy(target).to_string(),
-                            count: match_count,
-                            candidates: candidate_diagnostics(content, target, &matches),
-                        }));
-                    }
-                }
-            }
-            Cardinality::All => {
-                if match_count == 0 {
-                    let near_miss = diagnose_near_miss(content, target);
-                    return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
-                        target: near_miss,
-                    }));
-                }
-            }
-        }
+        enforce_cardinality(content, target, &matches, cardinality, desired_absence)?;
 
-        // Generate ByteEdit slices
-        let mut edits = Vec::new();
-        for &start in &matches {
-            let end = start + target.len();
-            let final_replacement = if is_insert_before {
-                let mut rep = replacement_bytes.clone();
-                rep.extend_from_slice(target);
-                rep
-            } else if is_insert_after {
-                let mut rep = target.to_vec();
-                rep.extend_from_slice(&replacement_bytes);
-                rep
-            } else {
-                replacement_bytes.clone()
-            };
-
-            edits.push(crate::engine::ByteEdit {
+        let replacement = build_replacement(target, replacement, placement);
+        Ok(matches
+            .into_iter()
+            .map(|start| ByteEdit {
                 start,
-                end,
-                replacement: final_replacement,
-            });
-        }
-
-        // Ensure edits are sorted (matches are naturally sorted by start offset)
-        edits.sort_by_key(|e| e.start);
-
-        Ok(edits)
+                end: start + target.len(),
+                replacement: replacement.clone(),
+            })
+            .collect())
     }
+}
+
+fn plan_ensure_present(content: &[u8], wanted: &str) -> Result<Vec<ByteEdit>, TextProviderError> {
+    if wanted.is_empty() {
+        return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
+            target: "empty ensure_present content".into(),
+        }));
+    }
+
+    if memmem::find(content, wanted.as_bytes()).is_some() {
+        return Ok(Vec::new());
+    }
+
+    let newline: &[u8] = if memmem::find(content, b"\r\n").is_some() {
+        b"\r\n"
+    } else {
+        b"\n"
+    };
+    let leading_newline = !content.is_empty() && !content.ends_with(b"\n");
+    let trailing_newline = content.ends_with(b"\n");
+    let capacity = wanted.len()
+        + usize::from(leading_newline) * newline.len()
+        + usize::from(trailing_newline) * newline.len();
+    let mut replacement = Vec::with_capacity(capacity);
+
+    if leading_newline {
+        replacement.extend_from_slice(newline);
+    }
+    replacement.extend_from_slice(wanted.as_bytes());
+    if trailing_newline {
+        replacement.extend_from_slice(newline);
+    }
+
+    Ok(vec![ByteEdit {
+        start: content.len(),
+        end: content.len(),
+        replacement,
+    }])
+}
+
+fn build_replacement(target: &[u8], replacement: &[u8], placement: Placement) -> Vec<u8> {
+    match placement {
+        Placement::Replace => replacement.to_vec(),
+        Placement::Before => {
+            let mut bytes = Vec::with_capacity(replacement.len() + target.len());
+            bytes.extend_from_slice(replacement);
+            bytes.extend_from_slice(target);
+            bytes
+        }
+        Placement::After => {
+            let mut bytes = Vec::with_capacity(target.len() + replacement.len());
+            bytes.extend_from_slice(target);
+            bytes.extend_from_slice(replacement);
+            bytes
+        }
+    }
+}
+
+fn enforce_cardinality(
+    content: &[u8],
+    target: &[u8],
+    matches: &[usize],
+    cardinality: &Cardinality,
+    desired_absence: bool,
+) -> Result<(), TextProviderError> {
+    if desired_absence {
+        return Ok(());
+    }
+
+    let actual = matches.len();
+    let valid = match cardinality {
+        Cardinality::ExactlyOne => actual == 1,
+        Cardinality::Exactly(expected) => actual == *expected,
+        Cardinality::All => actual > 0,
+    };
+    if valid {
+        return Ok(());
+    }
+
+    if actual == 0 {
+        return Err(TextProviderError::Refused(RefusalReason::MissingTarget {
+            target: diagnose_near_miss(content, target),
+        }));
+    }
+
+    Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
+        target: String::from_utf8_lossy(target).into_owned(),
+        count: actual,
+        candidates: candidate_diagnostics(content, target, matches),
+    }))
 }
 
 fn find_matches(content: &[u8], target: &[u8]) -> Vec<usize> {
     if target.is_empty() || target.len() > content.len() {
         return Vec::new();
     }
-    let mut matches = Vec::new();
-    let mut at = 0;
-    while at + target.len() <= content.len() {
-        if &content[at..at + target.len()] == target {
-            matches.push(at);
-            at += target.len();
-        } else {
-            at += 1;
-        }
-    }
-    matches
+    memmem::find_iter(content, target).collect()
 }
 
 fn plan_move(
@@ -270,7 +259,7 @@ fn plan_move(
     target: &str,
     before: &str,
     cardinality: &Cardinality,
-) -> Result<Vec<crate::engine::ByteEdit>, TextProviderError> {
+) -> Result<Vec<ByteEdit>, TextProviderError> {
     if !matches!(cardinality, Cardinality::ExactlyOne) {
         return Err(TextProviderError::Refused(
             RefusalReason::CardinalityMismatch {
@@ -279,6 +268,7 @@ fn plan_move(
             },
         ));
     }
+
     let targets = find_matches(content, target.as_bytes());
     let destinations = find_matches(content, before.as_bytes());
     if targets.len() != 1 || destinations.len() != 1 || target.is_empty() || before.is_empty() {
@@ -289,26 +279,27 @@ fn plan_move(
             },
         ));
     }
+
     let source = targets[0];
     let source_end = source + target.len();
     let destination = destinations[0];
     if source <= destination && destination <= source_end {
         return Ok(Vec::new());
     }
-    let insertion = destination;
+
     let mut edits = vec![
-        crate::engine::ByteEdit {
-            start: insertion,
-            end: insertion,
+        ByteEdit {
+            start: destination,
+            end: destination,
             replacement: target.as_bytes().to_vec(),
         },
-        crate::engine::ByteEdit {
+        ByteEdit {
             start: source,
             end: source_end,
             replacement: Vec::new(),
         },
     ];
-    edits.sort_by_key(|edit| edit.start);
+    edits.sort_unstable_by_key(|edit| edit.start);
     Ok(edits)
 }
 
@@ -316,8 +307,6 @@ fn diagnose_near_miss(content: &[u8], target: &[u8]) -> String {
     let target_str = String::from_utf8_lossy(target);
     let content_str = String::from_utf8_lossy(content);
 
-    // Check for common invisible / near-miss discrepancies
-    // 1. NBSP (U+00A0) vs space (U+0020)
     if target_str.contains(' ') && content_str.contains('\u{00A0}') {
         let alt = target_str.replace(' ', "\u{00A0}");
         if content_str.contains(&alt) {
@@ -331,7 +320,6 @@ fn diagnose_near_miss(content: &[u8], target: &[u8]) -> String {
         }
     }
 
-    // 2. CRLF vs LF
     if target_str.contains('\n') && !target_str.contains("\r\n") && content_str.contains("\r\n") {
         let alt = target_str.replace('\n', "\r\n");
         if content_str.contains(&alt) {
@@ -347,7 +335,6 @@ fn diagnose_near_miss(content: &[u8], target: &[u8]) -> String {
         }
     }
 
-    // 3. Tabs vs spaces
     if target_str.contains('\t') && content_str.contains("    ") {
         let alt = target_str.replace('\t', "    ");
         if content_str.contains(&alt) {
@@ -356,38 +343,30 @@ fn diagnose_near_miss(content: &[u8], target: &[u8]) -> String {
         }
     }
 
-    // 4. Zero-width space (U+200B)
     if content_str.contains('\u{200B}') {
         return "Target not found exact; content contains Zero-Width Space (U+200B).".to_string();
     }
 
-    // 5. BOM (Byte Order Mark U+FEFF)
     if content.starts_with(&[0xEF, 0xBB, 0xBF]) && !target.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        return "Target not found exact; file starts with UTF-8 BOM (EF BB BF) while target does not.".to_string();
+        return "Target not found exact; file starts with UTF-8 BOM (EF BB BF) while target does not."
+            .to_string();
     }
 
-    format!("Target not found: '{}'", target_str)
+    format!("Target not found: '{target_str}'")
 }
 
-fn candidate_diagnostics(
-    content: &[u8],
-    target: &[u8],
-    matches: &[usize],
-) -> Vec<crate::protocol::Candidate> {
+fn candidate_diagnostics(content: &[u8], target: &[u8], matches: &[usize]) -> Vec<Candidate> {
     matches
         .iter()
         .take(8)
         .map(|&offset| {
-            let line = content[..offset].iter().filter(|&&b| b == b'\n').count() + 1;
             let context_start = offset.saturating_sub(24);
             let context_end = (offset + target.len() + 24).min(content.len());
-            crate::protocol::Candidate {
+            Candidate {
                 offset,
-                line,
+                line: memchr_iter(b'\n', &content[..offset]).count() + 1,
                 context: String::from_utf8_lossy(&content[context_start..context_end]).into_owned(),
-                anchor_sha256: crate::engine::compute_sha256(
-                    &content[offset..offset + target.len()],
-                ),
+                anchor_sha256: compute_sha256(&content[offset..offset + target.len()]),
             }
         })
         .collect()
@@ -479,6 +458,22 @@ mod tests {
     }
 
     #[test]
+    fn empty_set_replacement_does_not_panic_or_fake_a_noop() {
+        let content = b"hello world";
+        let op = TextOperation::Set {
+            target: "missing".to_string(),
+            replacement: String::new(),
+        };
+        let result = TextProvider::plan(content, &op, &Cardinality::ExactlyOne);
+        assert!(matches!(
+            result,
+            Err(TextProviderError::Refused(
+                RefusalReason::MissingTarget { .. }
+            ))
+        ));
+    }
+
+    #[test]
     fn test_near_miss_nbsp() {
         let content = "hello\u{00A0}world".as_bytes();
         let op = TextOperation::Replace {
@@ -524,6 +519,18 @@ mod tests {
     }
 
     #[test]
+    fn exact_matching_remains_non_overlapping() {
+        let content = b"aaaa";
+        let op = TextOperation::Replace {
+            target: "aa".into(),
+            replacement: "b".into(),
+        };
+        let edits = TextProvider::plan(content, &op, &Cardinality::All).unwrap();
+        assert_eq!(edits.iter().map(|edit| edit.start).collect::<Vec<_>>(), [0, 2]);
+        assert_eq!(apply_byte_edits(content, &edits).unwrap(), b"bb");
+    }
+
+    #[test]
     fn test_bom_and_crlf_preservation() {
         let content = b"\xEF\xBB\xBFline1\r\nline2\r\n";
         let op = TextOperation::Replace {
@@ -532,7 +539,6 @@ mod tests {
         };
         let edits = TextProvider::plan(content, &op, &Cardinality::ExactlyOne).unwrap();
         let modified = apply_byte_edits(content, &edits).unwrap();
-        // Check that BOM and CRLF are preserved
         assert_eq!(modified, b"\xEF\xBB\xBFline1\r\nmodified2\r\n");
     }
 
