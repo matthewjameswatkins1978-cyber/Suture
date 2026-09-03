@@ -229,12 +229,9 @@ mod tests {
             &workspace,
             "partial",
             vec![
-                entry("a.txt", b"old-a", b"new-a")],
-        );
-        journal_for(
-            &workspace,
-            "partial-second",
-            vec![entry("b.txt", b"old-b", b"new-b")],
+                entry("a.txt", b"old-a", b"new-a"),
+                entry("b.txt", b"old-b", b"new-b"),
+            ],
         );
 
         let report = recover_all(&workspace);
