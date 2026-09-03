@@ -321,6 +321,31 @@ fn code_provider_targets_validated_syntax_nodes() {
 }
 
 #[test]
+fn typescript_provider_uses_typescript_grammar() {
+    let t = TempDir::new().unwrap();
+    let w = Workspace::new(t.path()).unwrap();
+    std::fs::write(t.path().join("main.ts"), b"const value: number = 1;\n").unwrap();
+    let c = execute_request(
+        &w,
+        &request(
+            "main.ts",
+            OperationPayload::Code(CodeOperation::ReplaceNode {
+                language: "typescript".into(),
+                target: "1".into(),
+                replacement: "2".into(),
+                node_kind: Some("number".into()),
+            }),
+        ),
+        false,
+    );
+    assert_eq!(c.outcome, Outcome::Applied);
+    assert_eq!(
+        w.read_file("main.ts").unwrap(),
+        b"const value: number = 2;\n"
+    );
+}
+
+#[test]
 fn generated_files_fail_closed_without_explicit_opt_in() {
     let t = TempDir::new().unwrap();
     let w = Workspace::new(t.path()).unwrap();

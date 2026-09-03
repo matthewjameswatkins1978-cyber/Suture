@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use crate::path::{PathNamespace, PathNormalizer};
 use atomic_write_file::AtomicWriteFile;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -21,6 +22,8 @@ pub enum WorkspaceError {
     Io(#[from] io::Error),
     #[error("destination already exists: {0}")]
     AlreadyExists(String),
+    #[error("path cannot be mapped from its declared namespace: {0}")]
+    UnmappablePath(String),
 }
 
 #[derive(Clone, Debug)]
@@ -47,6 +50,58 @@ impl Workspace {
     }
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Resolve a caller path in its declared namespace, returning one
+    /// workspace-relative spelling for every later read and write. Absolute
+    /// Windows/WSL paths are accepted only when their resolved target is under
+    /// this workspace; unmappable namespace paths fail closed.
+    pub fn resolve_namespaced_path(
+        &self,
+        path: &str,
+        namespace: &PathNamespace,
+    ) -> Result<String, WorkspaceError> {
+        #[cfg(target_os = "windows")]
+        if matches!(namespace, PathNamespace::Wsl { .. }) {
+            let normalized = path.replace('\\', "/");
+            let valid_mount = normalized
+                .strip_prefix("/mnt/")
+                .and_then(|mounted| mounted.split_once('/'))
+                .is_some_and(|(letter, rest)| {
+                    letter.len() == 1
+                        && letter.as_bytes()[0].is_ascii_alphabetic()
+                        && !rest.is_empty()
+                });
+            if normalized.starts_with('/') && !valid_mount {
+                return Err(WorkspaceError::UnmappablePath(path.into()));
+            }
+        }
+        let native = PathNormalizer::to_native_path(path, namespace);
+        if native.is_absolute() {
+            let resolved =
+                if native.exists() {
+                    std::fs::canonicalize(&native)?
+                } else {
+                    let parent = native.parent().ok_or_else(|| {
+                        WorkspaceError::UnmappablePath(native.display().to_string())
+                    })?;
+                    let parent = std::fs::canonicalize(parent).map_err(|error| {
+                        if error.kind() == io::ErrorKind::NotFound {
+                            WorkspaceError::NotFound(parent.display().to_string())
+                        } else {
+                            WorkspaceError::Io(error)
+                        }
+                    })?;
+                    parent.join(native.file_name().ok_or_else(|| {
+                        WorkspaceError::UnmappablePath(native.display().to_string())
+                    })?)
+                };
+            let relative = resolved
+                .strip_prefix(&self.root)
+                .map_err(|_| WorkspaceError::Traversal(path.into()))?;
+            return Ok(relative.to_string_lossy().replace('\\', "/"));
+        }
+        Ok(PathNormalizer::normalize(path, namespace))
     }
 
     pub fn resolve_path<P: AsRef<Path>>(&self, rel_path: P) -> Result<PathBuf, WorkspaceError> {
@@ -258,6 +313,7 @@ fn sha256(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::path::PathNamespace;
     use tempfile::TempDir;
     #[test]
     fn workspace_new_valid() {
@@ -302,6 +358,34 @@ mod tests {
         assert!(matches!(
             w.write_file_atomic_checked("x.txt", &h, b"three"),
             Err(WorkspaceError::StaleIdentity { .. })
+        ));
+    }
+
+    #[test]
+    fn absolute_declared_native_path_is_confined_to_workspace() {
+        let t = TempDir::new().unwrap();
+        std::fs::write(t.path().join("x.txt"), b"x").unwrap();
+        let workspace = Workspace::new(t.path()).unwrap();
+        let absolute = t.path().join("x.txt").to_string_lossy().into_owned();
+        assert_eq!(
+            workspace
+                .resolve_namespaced_path(&absolute, &PathNamespace::Native)
+                .unwrap(),
+            "x.txt"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn unmappable_wsl_path_is_explicitly_refused() {
+        let t = TempDir::new().unwrap();
+        let workspace = Workspace::new(t.path()).unwrap();
+        assert!(matches!(
+            workspace.resolve_namespaced_path(
+                "/home/agent/file.txt",
+                &PathNamespace::Wsl { distro: None }
+            ),
+            Err(WorkspaceError::UnmappablePath(_))
         ));
     }
 }

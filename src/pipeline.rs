@@ -44,8 +44,13 @@ pub fn execute_pipeline(
 }
 
 pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) -> Certificate {
-    let file_path = PathNormalizer::normalize(&request.file_path, &request.namespace);
+    let normalized_path = PathNormalizer::normalize(&request.file_path, &request.namespace);
     let provider = provider_name(&request.operation);
+    let file_path = match workspace.resolve_namespaced_path(&request.file_path, &request.namespace)
+    {
+        Ok(path) => path,
+        Err(error) => return workspace_error(request, &normalized_path, provider, error),
+    };
     if request.version != PROTOCOL_VERSION {
         return refusal(
             request,
@@ -443,7 +448,10 @@ pub fn execute_transaction(
     }
     let mut paths = std::collections::HashSet::new();
     for request in &transaction.requests {
-        let path = PathNormalizer::normalize(&request.file_path, &request.namespace);
+        let path = match workspace.resolve_namespaced_path(&request.file_path, &request.namespace) {
+            Ok(path) => path,
+            Err(error) => return transaction_refusal(transaction, workspace_reason(error)),
+        };
         if !paths.insert(path.clone()) {
             return transaction_refusal(
                 transaction,
@@ -491,7 +499,10 @@ pub fn execute_transaction(
                 reason_code: certificate.reason_code,
             };
         }
-        let path = PathNormalizer::normalize(&request.file_path, &request.namespace);
+        let path = match workspace.resolve_namespaced_path(&request.file_path, &request.namespace) {
+            Ok(path) => path,
+            Err(error) => return transaction_refusal(transaction, workspace_reason(error)),
+        };
         let original = match workspace.read_file(&path) {
             Ok(x) => x,
             Err(e) => {
@@ -661,7 +672,10 @@ fn execute_single_file_transaction(
             },
         );
     }
-    let path = PathNormalizer::normalize(&first.file_path, &first.namespace);
+    let path = match workspace.resolve_namespaced_path(&first.file_path, &first.namespace) {
+        Ok(path) => path,
+        Err(error) => return transaction_refusal(transaction, workspace_reason(error)),
+    };
     let original = match workspace.read_file(&path) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -1098,7 +1112,8 @@ fn execute_file_operation(
                 );
             }
             let dest = match workspace
-                .resolve_path(PathNormalizer::normalize(destination, &request.namespace))
+                .resolve_namespaced_path(destination, &request.namespace)
+                .and_then(|path| workspace.resolve_path(path))
             {
                 Ok(x) => x,
                 Err(e) => return workspace_error(request, file_path, provider, e),
@@ -1162,12 +1177,19 @@ fn execute_file_operation(
                 destination,
                 expected_source_hash,
                 destination_absent,
-            } => workspace.rename_file_checked(
-                file_path,
-                PathNormalizer::normalize(destination, &request.namespace),
-                &normalize_hash(expected_source_hash),
-                *destination_absent,
-            ),
+            } => {
+                let destination_path =
+                    match workspace.resolve_namespaced_path(destination, &request.namespace) {
+                        Ok(path) => path,
+                        Err(error) => return workspace_error(request, file_path, provider, error),
+                    };
+                workspace.rename_file_checked(
+                    file_path,
+                    destination_path,
+                    &normalize_hash(expected_source_hash),
+                    *destination_absent,
+                )
+            }
         };
         if let Err(e) = result {
             return match e {
@@ -1493,6 +1515,30 @@ fn workspace_error(r: &Request, path: &str, provider: &str, e: WorkspaceError) -
             RefusalReason::DestinationExists { path },
             String::new(),
         ),
+        WorkspaceError::UnmappablePath(path) => refusal(
+            r,
+            &path,
+            provider,
+            RefusalReason::UnmappablePath { path: path.clone() },
+            String::new(),
+        ),
+    }
+}
+
+fn workspace_reason(error: WorkspaceError) -> RefusalReason {
+    match error {
+        WorkspaceError::Traversal(path) => RefusalReason::WorkspaceTraversal { path },
+        WorkspaceError::SymlinkEscape(path) => RefusalReason::SymlinkEscape { path },
+        WorkspaceError::NotFound(path) => RefusalReason::MissingTarget { target: path },
+        WorkspaceError::StaleIdentity { expected, actual } => RefusalReason::StaleIdentity {
+            expected_hash: expected,
+            actual_hash: actual,
+        },
+        WorkspaceError::AlreadyExists(path) => RefusalReason::DestinationExists { path },
+        WorkspaceError::UnmappablePath(path) => RefusalReason::UnmappablePath { path },
+        WorkspaceError::Io(error) => RefusalReason::Custom {
+            message: format!("workspace I/O error: {error}"),
+        },
     }
 }
 #[allow(clippy::too_many_arguments)]
