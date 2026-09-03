@@ -57,6 +57,15 @@ fn every_provider_operation_is_in_canonical_operation_metadata() {
 }
 
 #[test]
+fn capabilities_do_not_advertise_unsupported_lifecycle_transactions() {
+    let filesystem = suture::metadata::provider_metadata()
+        .into_iter()
+        .find(|provider| provider.name == "filesystem")
+        .unwrap();
+    assert_eq!(filesystem.transaction_support, "single_file");
+}
+
+#[test]
 fn suggestion_is_schema_valid_and_refusal_recovery_is_machine_readable() {
     let suggestion = suture::metadata::suggest(
         "config.json",
