@@ -513,7 +513,14 @@ fn provider(
         selectors,
         preservation: vec![preservation],
         encodings: vec!["utf8", "utf8_bom"],
-        transaction_support: "single_file_and_multi_file",
+        // Lifecycle requests are guarded and recoverable as one-shot
+        // operations, but are not yet composable with the content transaction
+        // journal. Do not advertise a capability that the pipeline refuses.
+        transaction_support: if name == "filesystem" {
+            "single_file"
+        } else {
+            "single_file_and_multi_file"
+        },
         durable_anchor_support: durable,
     }
 }
