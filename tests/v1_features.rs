@@ -440,3 +440,41 @@ fn single_file_transaction_resolves_operations_on_coherent_candidate() {
     assert_eq!(c.outcome, Outcome::Applied);
     assert_eq!(w.read_file("x.txt").unwrap(), b"first second\n");
 }
+
+#[test]
+fn single_file_transaction_validates_candidates_before_commit() {
+    let t = TempDir::new().unwrap();
+    let w = Workspace::new(t.path()).unwrap();
+    let original = b"const value = 1;\n";
+    std::fs::write(t.path().join("main.js"), original).unwrap();
+    let tx = TransactionRequest {
+        version: PROTOCOL_VERSION.into(),
+        transaction_id: "tx-invalid-candidate".into(),
+        requests: vec![
+            request(
+                "main.js",
+                OperationPayload::Code(CodeOperation::ReplaceNode {
+                    language: "javascript".into(),
+                    target: "1".into(),
+                    replacement: "}".into(),
+                    node_kind: Some("number".into()),
+                }),
+            ),
+            request(
+                "main.js",
+                OperationPayload::Text(TextOperation::Replace {
+                    target: "value".into(),
+                    replacement: "other".into(),
+                }),
+            ),
+        ],
+        budget: EffectBudget::default(),
+    };
+    let certificate = suture::pipeline::execute_transaction(&w, &tx, false);
+    assert_eq!(certificate.outcome, Outcome::Failed);
+    assert_eq!(
+        certificate.reason_code.as_deref(),
+        Some("INVALID_STRUCTURE")
+    );
+    assert_eq!(w.read_file("main.js").unwrap(), original);
+}
