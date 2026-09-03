@@ -1,1 +1,0 @@
-The optimisation branch also carries an idiomatic Rust review. Refactors are accepted only where they improve correctness, performance, ownership clarity, allocation behaviour, error handling, or maintainability without changing Suture's safety contract.
