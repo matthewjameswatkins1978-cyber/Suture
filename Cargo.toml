@@ -2,6 +2,13 @@
 name = "suture"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
+description = "Deterministic, source-preserving file mutation for AI agents"
+license = "MIT"
+repository = "https://github.com/matthewjameswatkins1978-cyber/Suture"
+homepage = "https://github.com/matthewjameswatkins1978-cyber/Suture"
+keywords = ["file-mutation", "automation", "json", "toml", "cli"]
+categories = ["command-line-utilities", "config"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -10,8 +17,8 @@ schemars = "0.8"
 thiserror = "1.0"
 sha2 = "0.10"
 similar = "2.6"
-jsonc-parser = "0.24"
 toml_edit = "0.22"
+atomic-write-file = "0.3.1"
 
 [dev-dependencies]
 tempfile = "3"

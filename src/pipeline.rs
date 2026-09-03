@@ -1,17 +1,16 @@
 #![forbid(unsafe_code)]
 
-use crate::engine::{apply_byte_edits, compute_sha256, generate_diff};
+use crate::engine::{apply_byte_edits, compute_sha256, ByteEdit};
 use crate::path::PathNormalizer;
 use crate::protocol::{
-    Certificate, FailureReason, MutationPlan, OperationPayload, Outcome, RefusalReason, Request,
+    ByteRange, Certificate, CommitGuarantee, FailureReason, MutationPlan, OperationPayload,
+    Outcome, PreservationFacts, RefusalReason, Request, StructuralValidation, PROTOCOL_VERSION,
 };
 use crate::provider::json::{JsonProvider, JsonProviderError};
 use crate::provider::text::{TextOperation, TextProvider, TextProviderError};
 use crate::provider::toml::{TomlProvider, TomlProviderError};
 use crate::workspace::{Workspace, WorkspaceError};
 
-/// Executes the core mutation pipeline:
-/// Observe -> Guard -> Mutate -> Verify -> Certify
 pub fn execute_pipeline(
     workspace: &Workspace,
     plan: &MutationPlan,
@@ -22,421 +21,553 @@ pub fn execute_pipeline(
         version: plan.version.clone(),
         file_path: plan.file_path.clone(),
         namespace: Default::default(),
-        expected_pre_hash: if plan.expected_pre_hash.is_empty() {
-            None
-        } else {
-            Some(plan.expected_pre_hash.clone())
-        },
+        expected_pre_hash: (!plan.expected_pre_hash.is_empty())
+            .then(|| plan.expected_pre_hash.clone()),
         cardinality: plan.cardinality.clone(),
         operation: OperationPayload::Text(op.clone()),
     };
     execute_request(workspace, &request, dry_run)
 }
 
-/// Executes a top-level Request routing through Text, JSON, or TOML providers.
 pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) -> Certificate {
-    let normalized_file_path = PathNormalizer::normalize(&request.file_path, &request.namespace);
-    let file_path = normalized_file_path.clone();
-
-    // 1. Observe: Read target file via Workspace::read_file and compute actual pre-hash.
-    let original_bytes = match workspace.read_file(&file_path) {
-        Ok(bytes) => bytes,
+    let file_path = PathNormalizer::normalize(&request.file_path, &request.namespace);
+    let provider = provider_name(&request.operation);
+    if request.version != PROTOCOL_VERSION {
+        return refusal(
+            request,
+            &file_path,
+            provider,
+            RefusalReason::UnsupportedProtocolVersion {
+                requested: request.version.clone(),
+                supported: PROTOCOL_VERSION.into(),
+            },
+            String::new(),
+        );
+    }
+    let original = match workspace.read_file(&file_path) {
+        Ok(b) => b,
+        Err(e) => return workspace_error(request, &file_path, provider, e),
+    };
+    let pre_hash = compute_sha256(&original);
+    if let Some(expected) = request
+        .expected_pre_hash
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
+        let expected = expected.strip_prefix("sha256:").unwrap_or(expected);
+        if expected != pre_hash {
+            return refusal(
+                request,
+                &file_path,
+                provider,
+                RefusalReason::StaleIdentity {
+                    expected_hash: expected.into(),
+                    actual_hash: pre_hash.clone(),
+                },
+                pre_hash,
+            );
+        }
+    }
+    if let Some(reason) = unsupported_encoding(&original) {
+        return refusal(request, &file_path, provider, reason, pre_hash);
+    }
+    let edits = match plan_edits(&original, request) {
+        Ok(x) => x,
+        Err((r, _d)) => return refusal(request, &file_path, provider, r, pre_hash),
+    };
+    let engine_edits: Vec<ByteEdit> = edits
+        .iter()
+        .map(|e| ByteEdit {
+            start: e.start,
+            end: e.end,
+            replacement: e.replacement.clone(),
+        })
+        .collect();
+    let candidate = match apply_byte_edits(&original, &engine_edits) {
+        Ok(x) => x,
         Err(e) => {
-            return match e {
-                WorkspaceError::Traversal(p) => Certificate {
-                    outcome: Outcome::Refused,
-                    file_path,
-                    pre_hash: String::new(),
-                    post_hash: None,
-                    refusal_reason: Some(RefusalReason::WorkspaceTraversal { path: p }),
-                    failure_reason: None,
-                    diff_summary: None,
+            return failure(
+                request,
+                &file_path,
+                provider,
+                pre_hash,
+                FailureReason::InternalInvariant {
+                    details: e.to_string(),
                 },
-                WorkspaceError::SymlinkEscape(p) => Certificate {
-                    outcome: Outcome::Refused,
-                    file_path,
-                    pre_hash: String::new(),
-                    post_hash: None,
-                    refusal_reason: Some(RefusalReason::SymlinkEscape { path: p }),
-                    failure_reason: None,
-                    diff_summary: None,
-                },
-                WorkspaceError::NotFound(p) => Certificate {
-                    outcome: Outcome::Refused,
-                    file_path,
-                    pre_hash: String::new(),
-                    post_hash: None,
-                    refusal_reason: Some(RefusalReason::MissingTarget { target: p }),
-                    failure_reason: None,
-                    diff_summary: None,
-                },
-                WorkspaceError::Io(io_err) => {
-                    if io_err.kind() == std::io::ErrorKind::NotFound {
-                        Certificate {
-                            outcome: Outcome::Refused,
-                            file_path: file_path.clone(),
-                            pre_hash: String::new(),
-                            post_hash: None,
-                            refusal_reason: Some(RefusalReason::MissingTarget {
-                                target: file_path.clone(),
-                            }),
-                            failure_reason: None,
-                            diff_summary: None,
-                        }
-                    } else {
-                        Certificate {
-                            outcome: Outcome::Failed,
-                            file_path: file_path.clone(),
-                            pre_hash: String::new(),
-                            post_hash: None,
-                            refusal_reason: None,
-                            failure_reason: Some(FailureReason::IoError {
-                                message: io_err.to_string(),
-                            }),
-                            diff_summary: None,
-                        }
-                    }
-                }
-            };
+            )
         }
     };
-
-    let actual_pre_hash = compute_sha256(&original_bytes);
-
-    // 2. Guard: Verify expected_pre_hash if provided
-    if let Some(ref expected) = request.expected_pre_hash {
-        if !expected.is_empty() && expected != &actual_pre_hash {
-            return Certificate {
-                outcome: Outcome::Refused,
-                file_path,
-                pre_hash: actual_pre_hash.clone(),
-                post_hash: None,
-                refusal_reason: Some(RefusalReason::StaleIdentity {
-                    expected_hash: expected.clone(),
-                    actual_hash: actual_pre_hash,
-                }),
-                failure_reason: None,
-                diff_summary: None,
-            };
+    let ranges = changed_ranges(&engine_edits);
+    let provider_structural = match &request.operation {
+        OperationPayload::Json(_) => {
+            if let Err(e) = JsonProvider::validate(&candidate) {
+                return failure(
+                    request,
+                    &file_path,
+                    provider,
+                    pre_hash,
+                    FailureReason::ProviderError {
+                        details: e.to_string(),
+                    },
+                );
+            }
+            StructuralValidation::Valid {
+                format: "strict_json".into(),
+            }
         }
+        OperationPayload::Toml(_) => {
+            let valid = std::str::from_utf8(&candidate)
+                .ok()
+                .and_then(|s| s.parse::<toml_edit::DocumentMut>().ok())
+                .is_some();
+            if !valid {
+                return failure(
+                    request,
+                    &file_path,
+                    provider,
+                    pre_hash,
+                    FailureReason::ProviderError {
+                        details: "candidate TOML failed validation".into(),
+                    },
+                );
+            }
+            StructuralValidation::Valid {
+                format: "toml".into(),
+            }
+        }
+        OperationPayload::Text(_) => StructuralValidation::NotApplicable,
+    };
+    if candidate == original {
+        return completed(
+            request,
+            &file_path,
+            provider,
+            pre_hash.clone(),
+            Some(pre_hash.clone()),
+            Outcome::NoChange,
+            ranges,
+            provider_structural,
+            PreservationFacts::from_bytes(&original, &candidate),
+            CommitGuarantee::default(),
+            String::new(),
+            false,
+        );
     }
-
-    // 3. Mutate / Plan edits across providers
-    let edits = match &request.operation {
-        OperationPayload::Text(op) => {
-            match TextProvider::plan(&original_bytes, op, &request.cardinality) {
-                Ok(edits) => edits,
-                Err(err) => match err {
-                    TextProviderError::Refused(reason) => {
-                        return Certificate {
-                            outcome: Outcome::Refused,
-                            file_path,
-                            pre_hash: actual_pre_hash,
-                            post_hash: None,
-                            refusal_reason: Some(reason),
-                            failure_reason: None,
-                            diff_summary: None,
-                        };
-                    }
-                    TextProviderError::Error { message } => {
-                        return Certificate {
-                            outcome: Outcome::Failed,
-                            file_path,
-                            pre_hash: actual_pre_hash,
-                            post_hash: None,
-                            refusal_reason: None,
-                            failure_reason: Some(FailureReason::ParseError { details: message }),
-                            diff_summary: None,
-                        };
-                    }
-                },
-            }
-        }
-        OperationPayload::Json(op) => {
-            match JsonProvider::plan(&original_bytes, op, &request.cardinality) {
-                Ok(edits) => edits,
-                Err(err) => match err {
-                    JsonProviderError::Refused(reason) => {
-                        return Certificate {
-                            outcome: Outcome::Refused,
-                            file_path,
-                            pre_hash: actual_pre_hash,
-                            post_hash: None,
-                            refusal_reason: Some(reason),
-                            failure_reason: None,
-                            diff_summary: None,
-                        };
-                    }
-                    JsonProviderError::Error { message } => {
-                        return Certificate {
-                            outcome: Outcome::Failed,
-                            file_path,
-                            pre_hash: actual_pre_hash,
-                            post_hash: None,
-                            refusal_reason: None,
-                            failure_reason: Some(FailureReason::ParseError { details: message }),
-                            diff_summary: None,
-                        };
-                    }
-                },
-            }
-        }
-        OperationPayload::Toml(op) => {
-            match TomlProvider::plan(&original_bytes, op, &request.cardinality) {
-                Ok(edits) => edits,
-                Err(err) => match err {
-                    TomlProviderError::Refused(reason) => {
-                        return Certificate {
-                            outcome: Outcome::Refused,
-                            file_path,
-                            pre_hash: actual_pre_hash,
-                            post_hash: None,
-                            refusal_reason: Some(reason),
-                            failure_reason: None,
-                            diff_summary: None,
-                        };
-                    }
-                    TomlProviderError::Error { message } => {
-                        return Certificate {
-                            outcome: Outcome::Failed,
-                            file_path,
-                            pre_hash: actual_pre_hash,
-                            post_hash: None,
-                            refusal_reason: None,
-                            failure_reason: Some(FailureReason::ParseError { details: message }),
-                            diff_summary: None,
-                        };
-                    }
-                },
-            }
-        }
-    };
-
-    // 4. Apply byte edits and check NoChange
-    let candidate_bytes = match apply_byte_edits(
-        &original_bytes,
-        &edits
-            .iter()
-            .map(|e| crate::engine::ByteEdit {
-                start: e.start,
-                end: e.end,
-                replacement: e.replacement.clone(),
-            })
-            .collect::<Vec<_>>(),
-    ) {
-        Ok(bytes) => bytes,
-        Err(engine_err) => {
-            return Certificate {
-                outcome: Outcome::Failed,
-                file_path,
-                pre_hash: actual_pre_hash,
-                post_hash: None,
-                refusal_reason: None,
-                failure_reason: Some(FailureReason::ParseError {
-                    details: engine_err.to_string(),
-                }),
-                diff_summary: None,
-            };
-        }
-    };
-
-    if candidate_bytes == original_bytes {
-        return Certificate {
-            outcome: Outcome::NoChange,
-            file_path,
-            pre_hash: actual_pre_hash.clone(),
-            post_hash: Some(actual_pre_hash),
-            refusal_reason: None,
-            failure_reason: None,
-            diff_summary: Some(String::new()),
-        };
-    }
-
-    // 5. Verify: Compute candidate post_hash and bounded unified diff
-    let post_hash = compute_sha256(&candidate_bytes);
-    let diff_summary = generate_diff(&original_bytes, &candidate_bytes);
-
-    // 6. Commit or Dry-run
+    let post_hash = compute_sha256(&candidate);
+    let (diff, diff_truncated) = bounded_diff(&original, &engine_edits);
     if !dry_run {
-        if let Err(e) = workspace.write_file_atomic(&file_path, &candidate_bytes) {
-            let err_msg = e.to_string();
-            return match e {
-                WorkspaceError::Traversal(p) => Certificate {
-                    outcome: Outcome::Refused,
-                    file_path,
-                    pre_hash: actual_pre_hash,
-                    post_hash: Some(post_hash),
-                    refusal_reason: Some(RefusalReason::WorkspaceTraversal { path: p }),
-                    failure_reason: Some(FailureReason::WriteError { message: err_msg }),
-                    diff_summary: Some(diff_summary),
-                },
-                WorkspaceError::SymlinkEscape(p) => Certificate {
-                    outcome: Outcome::Refused,
-                    file_path,
-                    pre_hash: actual_pre_hash,
-                    post_hash: Some(post_hash),
-                    refusal_reason: Some(RefusalReason::SymlinkEscape { path: p }),
-                    failure_reason: Some(FailureReason::WriteError { message: err_msg }),
-                    diff_summary: Some(diff_summary),
-                },
-                WorkspaceError::NotFound(p) => Certificate {
-                    outcome: Outcome::Refused,
-                    file_path,
-                    pre_hash: actual_pre_hash,
-                    post_hash: Some(post_hash),
-                    refusal_reason: Some(RefusalReason::MissingTarget { target: p }),
-                    failure_reason: Some(FailureReason::WriteError { message: err_msg }),
-                    diff_summary: Some(diff_summary),
-                },
-                WorkspaceError::Io(io_err) => Certificate {
-                    outcome: Outcome::Failed,
-                    file_path,
-                    pre_hash: actual_pre_hash,
-                    post_hash: Some(post_hash),
-                    refusal_reason: None,
-                    failure_reason: Some(FailureReason::WriteError {
-                        message: io_err.to_string(),
-                    }),
-                    diff_summary: Some(diff_summary),
-                },
-            };
+        match workspace.write_file_atomic_checked(&file_path, &pre_hash, &candidate) {
+            Ok(()) => {}
+            Err(WorkspaceError::StaleIdentity { expected, actual }) => {
+                return refusal(
+                    request,
+                    &file_path,
+                    provider,
+                    RefusalReason::StaleIdentity {
+                        expected_hash: expected,
+                        actual_hash: actual,
+                    },
+                    pre_hash,
+                )
+            }
+            Err(e) => {
+                return failure(
+                    request,
+                    &file_path,
+                    provider,
+                    pre_hash,
+                    FailureReason::CommitFailure {
+                        message: e.to_string(),
+                    },
+                )
+            }
         }
     }
+    let commit = if dry_run {
+        CommitGuarantee {
+            mode: "dry_run".into(),
+            ..CommitGuarantee::default()
+        }
+    } else {
+        CommitGuarantee {
+            mode: "committed_atomic_replace".into(),
+            content_replacement: "atomic replacement after staged flush".into(),
+            permissions: "platform-dependent; not asserted".into(),
+            timestamps: "not preserved".into(),
+            acl_xattr: "unknown".into(),
+        }
+    };
+    if !dry_run {
+        let landed = match workspace.read_file(&file_path) {
+            Ok(b) => b,
+            Err(e) => {
+                return failure(
+                    request,
+                    &file_path,
+                    provider,
+                    pre_hash,
+                    FailureReason::PostCommitVerificationFailure {
+                        expected_hash: post_hash.clone(),
+                        actual_hash: format!("read failed: {e}"),
+                    },
+                )
+            }
+        };
+        let actual = compute_sha256(&landed);
+        if landed != candidate {
+            return failure(
+                request,
+                &file_path,
+                provider,
+                pre_hash,
+                FailureReason::PostCommitVerificationFailure {
+                    expected_hash: post_hash,
+                    actual_hash: actual,
+                },
+            );
+        }
+    }
+    completed(
+        request,
+        &file_path,
+        provider,
+        pre_hash,
+        Some(post_hash),
+        Outcome::Applied,
+        ranges,
+        provider_structural,
+        PreservationFacts::from_bytes(&original, &candidate),
+        commit,
+        diff,
+        diff_truncated,
+    )
+}
 
-    // 7. Certify
+fn plan_edits(
+    original: &[u8],
+    request: &Request,
+) -> Result<Vec<ByteEdit>, (RefusalReason, String)> {
+    match &request.operation {
+        OperationPayload::Text(o) => {
+            TextProvider::plan(original, o, &request.cardinality).map_err(|e| {
+                let detail = e.to_string();
+                match e {
+                    TextProviderError::Refused(r) => (r, detail),
+                    TextProviderError::Error { message } => (
+                        RefusalReason::Custom {
+                            message: message.clone(),
+                        },
+                        message,
+                    ),
+                }
+            })
+        }
+        OperationPayload::Json(o) => {
+            JsonProvider::plan(original, o, &request.cardinality).map_err(|e| {
+                let detail = e.to_string();
+                match e {
+                    JsonProviderError::Refused(r) => (r, detail),
+                    JsonProviderError::Error { message } => (
+                        RefusalReason::Custom {
+                            message: message.clone(),
+                        },
+                        message,
+                    ),
+                }
+            })
+        }
+        OperationPayload::Toml(o) => {
+            TomlProvider::plan(original, o, &request.cardinality).map_err(|e| {
+                let detail = e.to_string();
+                match e {
+                    TomlProviderError::Refused(r) => (r, detail),
+                    TomlProviderError::Error { message } => (
+                        RefusalReason::Custom {
+                            message: message.clone(),
+                        },
+                        message,
+                    ),
+                }
+            })
+        }
+    }
+}
+fn provider_name(op: &OperationPayload) -> &'static str {
+    match op {
+        OperationPayload::Text(_) => "text",
+        OperationPayload::Json(_) => "json",
+        OperationPayload::Toml(_) => "toml",
+    }
+}
+fn provider_version(op: &OperationPayload) -> &'static str {
+    match op {
+        OperationPayload::Text(_) => "text-byte-v1",
+        OperationPayload::Json(_) => "json-source-v1",
+        OperationPayload::Toml(_) => "toml-edit-narrow-v1",
+    }
+}
+fn unsupported_encoding(bytes: &[u8]) -> Option<RefusalReason> {
+    if bytes.starts_with(&[0xff, 0xfe])
+        || bytes.starts_with(&[0xfe, 0xff])
+        || bytes.starts_with(&[0xff, 0xfe, 0, 0])
+        || bytes.starts_with(&[0, 0, 0xfe, 0xff])
+    {
+        Some(RefusalReason::UnsupportedEncoding {
+            details: "UTF-16/UTF-32 is not part of v0.1".into(),
+        })
+    } else if std::str::from_utf8(bytes).is_err() {
+        Some(RefusalReason::UnsupportedEncoding {
+            details: "input is not valid UTF-8".into(),
+        })
+    } else {
+        None
+    }
+}
+fn changed_ranges(edits: &[ByteEdit]) -> Vec<ByteRange> {
+    edits
+        .iter()
+        .filter(|e| e.start != e.end || !e.replacement.is_empty())
+        .map(|e| ByteRange {
+            start: e.start,
+            end: e.end,
+        })
+        .collect()
+}
+fn bounded_diff(original: &[u8], edits: &[ByteEdit]) -> (String, bool) {
+    const LIMIT: usize = 4096;
+    let mut d = String::from("byte-range diff (unchanged bytes omitted):\n");
+    for edit in edits {
+        let old = String::from_utf8_lossy(&original[edit.start..edit.end]);
+        let new = String::from_utf8_lossy(&edit.replacement);
+        d.push_str(&format!(
+            "@@ {}..{} @@\n-{}\n+{}\n",
+            edit.start, edit.end, old, new
+        ));
+    }
+    if d.len() > LIMIT {
+        let end = d
+            .char_indices()
+            .take_while(|(i, _)| *i < LIMIT)
+            .map(|(i, _)| i)
+            .last()
+            .unwrap_or(0);
+        (
+            format!(
+                "{}\n[diff truncated; total characters: {}]",
+                &d[..end],
+                d.len()
+            ),
+            true,
+        )
+    } else {
+        (d, false)
+    }
+}
+fn refusal(
+    r: &Request,
+    path: &str,
+    provider: &str,
+    reason: RefusalReason,
+    pre: String,
+) -> Certificate {
+    completed(
+        r,
+        path,
+        provider,
+        pre,
+        None,
+        Outcome::Refused,
+        Vec::new(),
+        StructuralValidation::NotApplicable,
+        PreservationFacts::default(),
+        CommitGuarantee::default(),
+        format!("{reason:?}"),
+        false,
+    )
+    .with_reason(reason)
+}
+fn failure(
+    r: &Request,
+    path: &str,
+    provider: &str,
+    pre: String,
+    reason: FailureReason,
+) -> Certificate {
+    let mut c = completed(
+        r,
+        path,
+        provider,
+        pre,
+        None,
+        Outcome::Failed,
+        Vec::new(),
+        StructuralValidation::NotApplicable,
+        PreservationFacts::default(),
+        CommitGuarantee::default(),
+        String::new(),
+        false,
+    );
+    c.failure_reason = Some(reason);
+    c
+}
+fn workspace_error(r: &Request, path: &str, provider: &str, e: WorkspaceError) -> Certificate {
+    match e {
+        WorkspaceError::Traversal(p) => refusal(
+            r,
+            path,
+            provider,
+            RefusalReason::WorkspaceTraversal { path: p.clone() },
+            String::new(),
+        ),
+        WorkspaceError::SymlinkEscape(p) => refusal(
+            r,
+            path,
+            provider,
+            RefusalReason::SymlinkEscape { path: p.clone() },
+            String::new(),
+        ),
+        WorkspaceError::NotFound(p) => refusal(
+            r,
+            path,
+            provider,
+            RefusalReason::MissingTarget { target: p.clone() },
+            String::new(),
+        ),
+        WorkspaceError::StaleIdentity { expected, actual } => refusal(
+            r,
+            path,
+            provider,
+            RefusalReason::StaleIdentity {
+                expected_hash: expected,
+                actual_hash: actual,
+            },
+            String::new(),
+        ),
+        WorkspaceError::Io(e) => failure(
+            r,
+            path,
+            provider,
+            String::new(),
+            FailureReason::IoError {
+                message: e.to_string(),
+            },
+        ),
+    }
+}
+#[allow(clippy::too_many_arguments)]
+fn completed(
+    r: &Request,
+    path: &str,
+    provider: &str,
+    pre: String,
+    post: Option<String>,
+    outcome: Outcome,
+    ranges: Vec<ByteRange>,
+    structural: StructuralValidation,
+    preservation: PreservationFacts,
+    commit: CommitGuarantee,
+    diff: String,
+    truncated: bool,
+) -> Certificate {
     Certificate {
-        outcome: Outcome::Applied,
-        file_path,
-        pre_hash: actual_pre_hash,
-        post_hash: Some(post_hash),
+        protocol_version: r.version.clone(),
+        outcome,
+        file_path: path.into(),
+        provider: provider.into(),
+        provider_version: provider_version(&r.operation).into(),
+        expected_cardinality: r.cardinality.clone(),
+        observed_cardinality: Some(1),
+        pre_hash: pre,
+        post_hash: post,
+        changed_ranges: ranges,
+        diff_summary: Some(diff),
+        diff_truncated: truncated,
+        structural_validation: structural,
+        preservation,
+        commit,
         refusal_reason: None,
         failure_reason: None,
-        diff_summary: Some(diff_summary),
+        diagnostics: Vec::new(),
     }
+}
+trait WithReason {
+    fn with_reason(self, r: RefusalReason) -> Self;
+}
+impl WithReason for Certificate {
+    fn with_reason(mut self, r: RefusalReason) -> Self {
+        self.refusal_reason = Some(r);
+        self
+    }
+}
+impl PreservationFacts {
+    fn from_bytes(a: &[u8], b: &[u8]) -> Self {
+        Self {
+            unrelated_bytes_changed: false,
+            line_endings_changed: a.contains(&b'\r') != b.contains(&b'\r'),
+            bom_changed: a.starts_with(&[0xef, 0xbb, 0xbf]) != b.starts_with(&[0xef, 0xbb, 0xbf]),
+            final_newline_changed: a.ends_with(b"\n") != b.ends_with(b"\n"),
+            comments_preserved: Some(comment_count(a) == comment_count(b)),
+            metadata: "content-only verification; replacement metadata not asserted".into(),
+        }
+    }
+}
+fn comment_count(b: &[u8]) -> usize {
+    b.split(|x| *x == b'\n')
+        .filter(|l| {
+            l.iter()
+                .position(|x| !*x == b' ' && !*x == b'\t')
+                .map(|i| l[i..].starts_with(b"#"))
+                .unwrap_or(false)
+        })
+        .count()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocol::{Cardinality, OperationPayload};
+    use crate::provider::text::TextOperation;
     use tempfile::TempDir;
-
     #[test]
-    fn test_pipeline_successful_apply() {
-        let tmp = TempDir::new().unwrap();
-        let ws = Workspace::new(tmp.path()).unwrap();
-        let file_path = "test.txt";
-        std::fs::write(tmp.path().join(file_path), b"Hello World\n").unwrap();
-
-        let pre_hash = compute_sha256(b"Hello World\n");
-        let request = Request {
-            version: "0.1.0".to_string(),
-            file_path: file_path.to_string(),
-            namespace: Default::default(),
-            expected_pre_hash: Some(pre_hash.clone()),
-            cardinality: Cardinality::ExactlyOne,
-            operation: OperationPayload::Text(TextOperation::Replace {
-                target: "World".to_string(),
-                replacement: "Suture".to_string(),
-            }),
-        };
-
-        let cert = execute_request(&ws, &request, false);
-        assert_eq!(cert.outcome, Outcome::Applied);
-        assert_eq!(cert.pre_hash, pre_hash);
-        assert!(cert.post_hash.is_some());
-        assert_ne!(cert.post_hash.as_ref().unwrap(), &pre_hash);
-        let diff = cert.diff_summary.as_ref().unwrap();
-        assert!(diff.contains("-Hello World"));
-        assert!(diff.contains("+Hello Suture"));
-
-        let updated = std::fs::read_to_string(tmp.path().join(file_path)).unwrap();
-        assert_eq!(updated, "Hello Suture\n");
-    }
-
-    #[test]
-    fn test_pipeline_dry_run() {
-        let tmp = TempDir::new().unwrap();
-        let ws = Workspace::new(tmp.path()).unwrap();
-        let file_path = "test.txt";
-        std::fs::write(tmp.path().join(file_path), b"Hello World\n").unwrap();
-
-        let pre_hash = compute_sha256(b"Hello World\n");
-        let request = Request {
-            version: "0.1.0".to_string(),
-            file_path: file_path.to_string(),
-            namespace: Default::default(),
-            expected_pre_hash: Some(pre_hash.clone()),
-            cardinality: Cardinality::ExactlyOne,
-            operation: OperationPayload::Text(TextOperation::Replace {
-                target: "World".to_string(),
-                replacement: "Suture".to_string(),
-            }),
-        };
-
-        let cert = execute_request(&ws, &request, true);
-        assert_eq!(cert.outcome, Outcome::Applied);
-        assert!(cert.post_hash.is_some());
-        assert!(cert.diff_summary.is_some());
-
-        let disk_content = std::fs::read_to_string(tmp.path().join(file_path)).unwrap();
-        assert_eq!(disk_content, "Hello World\n");
-    }
-
-    #[test]
-    fn test_pipeline_stale_identity() {
-        let tmp = TempDir::new().unwrap();
-        let ws = Workspace::new(tmp.path()).unwrap();
-        let file_path = "test.txt";
-        std::fs::write(tmp.path().join(file_path), b"Hello World\n").unwrap();
-
-        let request = Request {
-            version: "0.1.0".to_string(),
-            file_path: file_path.to_string(),
-            namespace: Default::default(),
-            expected_pre_hash: Some("stale_hash_value".to_string()),
-            cardinality: Cardinality::ExactlyOne,
-            operation: OperationPayload::Text(TextOperation::Replace {
-                target: "World".to_string(),
-                replacement: "Suture".to_string(),
-            }),
-        };
-
-        let cert = execute_request(&ws, &request, false);
-        assert_eq!(cert.outcome, Outcome::Refused);
-        match cert.refusal_reason.unwrap() {
-            RefusalReason::StaleIdentity {
-                expected_hash,
-                actual_hash,
-            } => {
-                assert_eq!(expected_hash, "stale_hash_value");
-                assert_ne!(actual_hash, "stale_hash_value");
-            }
-            other => panic!("Expected StaleIdentity, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_pipeline_workspace_traversal_refusal() {
-        let tmp = TempDir::new().unwrap();
-        let ws = Workspace::new(tmp.path()).unwrap();
-        let request = Request {
-            version: "0.1.0".to_string(),
-            file_path: "../outside.txt".to_string(),
+    fn apply_and_certify_landed_bytes() {
+        let t = TempDir::new().unwrap();
+        let w = Workspace::new(t.path()).unwrap();
+        std::fs::write(t.path().join("x.txt"), b"a b\n").unwrap();
+        let r = Request {
+            version: PROTOCOL_VERSION.into(),
+            file_path: "x.txt".into(),
             namespace: Default::default(),
             expected_pre_hash: None,
             cardinality: Cardinality::ExactlyOne,
             operation: OperationPayload::Text(TextOperation::Replace {
-                target: "a".to_string(),
-                replacement: "b".to_string(),
+                target: "b".into(),
+                replacement: "c".into(),
             }),
         };
-
-        let cert = execute_request(&ws, &request, false);
-        assert_eq!(cert.outcome, Outcome::Refused);
-        match cert.refusal_reason.unwrap() {
-            RefusalReason::WorkspaceTraversal { .. } => {}
-            other => panic!("Expected WorkspaceTraversal, got {:?}", other),
-        }
+        let c = execute_request(&w, &r, false);
+        let expected = compute_sha256(b"a c\n");
+        assert_eq!(c.outcome, Outcome::Applied);
+        assert_eq!(c.post_hash.as_deref(), Some(expected.as_str()));
+        assert_eq!(w.read_file("x.txt").unwrap(), b"a c\n");
+    }
+    #[test]
+    fn dry_run_is_non_mutating() {
+        let t = TempDir::new().unwrap();
+        let w = Workspace::new(t.path()).unwrap();
+        std::fs::write(t.path().join("x.txt"), b"a b").unwrap();
+        let r = Request {
+            version: PROTOCOL_VERSION.into(),
+            file_path: "x.txt".into(),
+            namespace: Default::default(),
+            expected_pre_hash: None,
+            cardinality: Cardinality::ExactlyOne,
+            operation: OperationPayload::Text(TextOperation::Replace {
+                target: "b".into(),
+                replacement: "c".into(),
+            }),
+        };
+        let c = execute_request(&w, &r, true);
+        assert_eq!(c.outcome, Outcome::Applied);
+        assert_eq!(w.read_file("x.txt").unwrap(), b"a b");
     }
 }

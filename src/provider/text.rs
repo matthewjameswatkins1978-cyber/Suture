@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TextOperation {
     Replace { target: String, replacement: String },
     InsertBefore { target: String, content: String },
@@ -100,6 +100,7 @@ impl TextProvider {
                     return Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
                         target: String::from_utf8_lossy(target).to_string(),
                         count: match_count,
+                        candidates: candidate_diagnostics(content, target, &matches),
                     }));
                 }
             }
@@ -113,6 +114,7 @@ impl TextProvider {
                     return Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
                         target: String::from_utf8_lossy(target).to_string(),
                         count: match_count,
+                        candidates: candidate_diagnostics(content, target, &matches),
                     }));
                 }
             }
@@ -211,6 +213,30 @@ fn diagnose_near_miss(content: &[u8], target: &[u8]) -> String {
     }
 
     format!("Target not found: '{}'", target_str)
+}
+
+fn candidate_diagnostics(
+    content: &[u8],
+    target: &[u8],
+    matches: &[usize],
+) -> Vec<crate::protocol::Candidate> {
+    matches
+        .iter()
+        .take(8)
+        .map(|&offset| {
+            let line = content[..offset].iter().filter(|&&b| b == b'\n').count() + 1;
+            let context_start = offset.saturating_sub(24);
+            let context_end = (offset + target.len() + 24).min(content.len());
+            crate::protocol::Candidate {
+                offset,
+                line,
+                context: String::from_utf8_lossy(&content[context_start..context_end]).into_owned(),
+                anchor_sha256: crate::engine::compute_sha256(
+                    &content[offset..offset + target.len()],
+                ),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

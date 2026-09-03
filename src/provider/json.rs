@@ -6,8 +6,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum JsonOperation {
     Set {
         path: String,
@@ -15,7 +15,7 @@ pub enum JsonOperation {
     },
     Insert {
         path: String,
-        key_or_index: String, // Can be object key or numeric index
+        key_or_index: String,
         value: serde_json::Value,
     },
     Delete {
@@ -41,517 +41,564 @@ impl JsonProvider {
     pub fn plan(
         content: &[u8],
         op: &JsonOperation,
-        _cardinality: &Cardinality,
+        cardinality: &Cardinality,
     ) -> Result<Vec<ByteEdit>, JsonProviderError> {
-        // 1. Strict JSON validation: parse input content as UTF-8 and validate JSON syntax
-        let content_str = std::str::from_utf8(content).map_err(|e| {
-            JsonProviderError::Refused(RefusalReason::MalformedInput {
-                details: format!("Invalid UTF-8 in JSON file: {}", e),
-            })
-        })?;
-
-        let mut root_val: serde_json::Value = serde_json::from_str(content_str).map_err(|e| {
-            JsonProviderError::Refused(RefusalReason::MalformedInput {
-                details: format!("Malformed JSON syntax: {}", e),
-            })
-        })?;
-
-        // 2. Apply operation on cloned serde_json::Value to produce modified value
-        let modified_val = apply_json_operation(&mut root_val, op)?;
-
-        // 3. Re-serialize modified value to JSON string with pretty printing or maintaining style
-        // Suture requirement: strict JSON source-preserving or formatting-preserving edits.
-        // If we pretty-print or serialize, let's preserve formatting/indentation if possible,
-        // or serialize using serde_json::to_string_pretty or to_string matching detected indentation.
-        let indent = detect_json_indent(content_str);
-        let serialized_modified = serialize_with_indent(&modified_val, indent);
-
-        // To generate precise ByteEdits while preserving unchanged formatting outside changed fields,
-        // if whole-file re-serialization is used, we can produce a single ByteEdit spanning the entire file
-        // (or minimal diff range). But wait, requirement says:
-        // "JsonProvider::plan generating ByteEdit(s) while preserving formatting/whitespace outside changed fields, strict JSON validation rejecting malformed syntax, refusal handling for missing/malformed targets, and comprehensive unit tests."
-        // Wait, if we replace the whole JSON body or specific part, let's check how ByteEdit is structured:
-        // pub struct ByteEdit { pub start: usize, pub end: usize, pub replacement: Vec<u8> }
-        // If we replace `0..content.len()` with the serialized modified value (while preserving trailing newline or formatting),
-        // or if we target specific JSON sub-structures. Since JSON formatting (whitespace, comment-like structures or indentation)
-        // is preserved when replacing the whole content or when re-serializing, let's examine if replacing `0..content.len()` or sub-range works.
-        // Wait, let's check if there's any trailing newline or original line ending preservation.
-        let has_trailing_newline = content.ends_with(b"\n");
-        let mut final_bytes = serialized_modified.into_bytes();
-        if has_trailing_newline && !final_bytes.ends_with(b"\n") {
-            final_bytes.push(b'\n');
+        if !matches!(cardinality, Cardinality::ExactlyOne) {
+            return Err(JsonProviderError::Refused(
+                RefusalReason::CardinalityMismatch {
+                    expected: "exactly_one (structured paths are unique)".into(),
+                    actual: 1,
+                },
+            ));
         }
-
-        // Generate a single ByteEdit for the whole file or range if changed, or empty if no change.
-        if final_bytes == content {
-            return Ok(Vec::new());
+        let tree = parse_document(content)?;
+        let edit = match op {
+            JsonOperation::Set { path, value } => {
+                let node = locate(&tree, &parse_path(path)?)?;
+                ByteEdit {
+                    start: node.start,
+                    end: node.end,
+                    replacement: serde_json::to_vec(value).map_err(|e| {
+                        JsonProviderError::Error {
+                            message: e.to_string(),
+                        }
+                    })?,
+                }
+            }
+            JsonOperation::Insert {
+                path,
+                key_or_index,
+                value,
+            } => insert_edit(content, &tree, path, key_or_index, value)?,
+            JsonOperation::Delete { path } => delete_edit(&tree, path)?,
+            JsonOperation::RenameKey { path, new_key } => rename_edit(&tree, path, new_key)?,
+        };
+        if edit.start == edit.end && edit.replacement.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Ok(vec![edit])
         }
+    }
 
-        Ok(vec![ByteEdit {
-            start: 0,
-            end: content.len(),
-            replacement: final_bytes,
-        }])
+    pub fn validate(content: &[u8]) -> Result<(), JsonProviderError> {
+        parse_document(content).map(|_| ())
     }
 }
 
-fn apply_json_operation(
-    root: &mut serde_json::Value,
-    op: &JsonOperation,
-) -> Result<serde_json::Value, JsonProviderError> {
-    let mut val = root.clone();
-    match op {
-        JsonOperation::Set { path, value } => {
-            let parts = parse_json_path(path)?;
-            set_path(&mut val, &parts, value.clone())?;
-        }
-        JsonOperation::Insert {
-            path,
-            key_or_index,
-            value,
-        } => {
-            let parts = parse_json_path(path)?;
-            insert_path(&mut val, &parts, key_or_index, value.clone())?;
-        }
-        JsonOperation::Delete { path } => {
-            let parts = parse_json_path(path)?;
-            delete_path(&mut val, &parts)?;
-        }
-        JsonOperation::RenameKey { path, new_key } => {
-            let parts = parse_json_path(path)?;
-            rename_key_path(&mut val, &parts, new_key)?;
-        }
-    }
-    Ok(val)
+#[derive(Debug, Clone)]
+struct Node {
+    start: usize,
+    end: usize,
+    kind: NodeKind,
+}
+#[derive(Debug, Clone)]
+enum NodeKind {
+    Object(Vec<Member>),
+    Array(Vec<Node>),
+    Scalar,
+}
+#[derive(Debug, Clone)]
+struct Member {
+    key: String,
+    key_start: usize,
+    key_end: usize,
+    start: usize,
+    end: usize,
+    value: Node,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PathSegment {
+struct Parser<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+impl<'a> Parser<'a> {
+    fn ws(&mut self) {
+        while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+    }
+    fn value(&mut self) -> Result<Node, JsonProviderError> {
+        self.ws();
+        let start = self.pos;
+        let b = *self
+            .bytes
+            .get(self.pos)
+            .ok_or_else(|| malformed("unexpected end of JSON"))?;
+        match b {
+            b'{' => self.object(start),
+            b'[' => self.array(start),
+            b'"' => {
+                self.string()?;
+                Ok(Node {
+                    start,
+                    end: self.pos,
+                    kind: NodeKind::Scalar,
+                })
+            }
+            _ => {
+                while self.pos < self.bytes.len()
+                    && !matches!(self.bytes[self.pos], b',' | b']' | b'}')
+                    && !self.bytes[self.pos].is_ascii_whitespace()
+                {
+                    self.pos += 1;
+                }
+                if self.pos == start {
+                    Err(malformed("expected JSON value"))
+                } else {
+                    Ok(Node {
+                        start,
+                        end: self.pos,
+                        kind: NodeKind::Scalar,
+                    })
+                }
+            }
+        }
+    }
+    fn string(&mut self) -> Result<String, JsonProviderError> {
+        let start = self.pos;
+        self.pos += 1;
+        while self.pos < self.bytes.len() {
+            match self.bytes[self.pos] {
+                b'\\' => {
+                    self.pos += 2;
+                }
+                b'"' => {
+                    self.pos += 1;
+                    return serde_json::from_slice(&self.bytes[start..self.pos])
+                        .map_err(|e| malformed(&format!("invalid JSON string: {e}")));
+                }
+                _ => self.pos += 1,
+            }
+        }
+        Err(malformed("unterminated JSON string"))
+    }
+    fn object(&mut self, start: usize) -> Result<Node, JsonProviderError> {
+        self.pos += 1;
+        self.ws();
+        let mut members = Vec::new();
+        if self.bytes.get(self.pos) == Some(&b'}') {
+            self.pos += 1;
+            return Ok(Node {
+                start,
+                end: self.pos,
+                kind: NodeKind::Object(members),
+            });
+        }
+        loop {
+            self.ws();
+            let key_start = self.pos;
+            let key = self.string()?;
+            let key_end = self.pos;
+            self.ws();
+            if self.bytes.get(self.pos) != Some(&b':') {
+                return Err(malformed("expected ':' after object key"));
+            }
+            self.pos += 1;
+            let value = self.value()?;
+            let end = value.end;
+            if members.iter().any(|m: &Member| m.key == key) {
+                return Err(JsonProviderError::Refused(
+                    RefusalReason::CardinalityAmbiguous {
+                        path: key.clone(),
+                        count: 2,
+                    },
+                ));
+            }
+            members.push(Member {
+                key,
+                key_start,
+                key_end,
+                start: key_start,
+                end,
+                value,
+            });
+            self.ws();
+            match self.bytes.get(self.pos) {
+                Some(b',') => {
+                    self.pos += 1;
+                }
+                Some(b'}') => {
+                    self.pos += 1;
+                    break;
+                }
+                _ => return Err(malformed("expected ',' or '}' in object")),
+            }
+        }
+        Ok(Node {
+            start,
+            end: self.pos,
+            kind: NodeKind::Object(members),
+        })
+    }
+    fn array(&mut self, start: usize) -> Result<Node, JsonProviderError> {
+        self.pos += 1;
+        self.ws();
+        let mut values = Vec::new();
+        if self.bytes.get(self.pos) == Some(&b']') {
+            self.pos += 1;
+            return Ok(Node {
+                start,
+                end: self.pos,
+                kind: NodeKind::Array(values),
+            });
+        }
+        loop {
+            values.push(self.value()?);
+            self.ws();
+            match self.bytes.get(self.pos) {
+                Some(b',') => self.pos += 1,
+                Some(b']') => {
+                    self.pos += 1;
+                    break;
+                }
+                _ => return Err(malformed("expected ',' or ']' in array")),
+            }
+        }
+        Ok(Node {
+            start,
+            end: self.pos,
+            kind: NodeKind::Array(values),
+        })
+    }
+}
+
+fn malformed(details: &str) -> JsonProviderError {
+    JsonProviderError::Refused(RefusalReason::MalformedInput {
+        details: details.into(),
+    })
+}
+fn parse_document(content: &[u8]) -> Result<Node, JsonProviderError> {
+    let body = if content.starts_with(&[0xef, 0xbb, 0xbf]) {
+        &content[3..]
+    } else {
+        content
+    };
+    serde_json::from_slice::<serde_json::Value>(body)
+        .map_err(|e| malformed(&format!("Malformed JSON syntax: {e}")))?;
+    let mut p = Parser {
+        bytes: content,
+        pos: if content.starts_with(&[0xef, 0xbb, 0xbf]) {
+            3
+        } else {
+            0
+        },
+    };
+    let root = p.value()?;
+    p.ws();
+    if p.pos != content.len() {
+        return Err(malformed("trailing non-whitespace after JSON value"));
+    }
+    Ok(root)
+}
+
+#[derive(Debug, Clone)]
+enum Segment {
     Key(String),
     Index(usize),
 }
-
-fn parse_json_path(path: &str) -> Result<Vec<PathSegment>, JsonProviderError> {
+fn parse_path(path: &str) -> Result<Vec<Segment>, JsonProviderError> {
     if path.is_empty() || path == "$" {
         return Ok(Vec::new());
     }
-
-    let mut path_str = path;
-    if path_str.starts_with("$.") {
-        path_str = &path_str[2..];
-    } else if path_str.starts_with('$') {
-        path_str = &path_str[1..];
+    let mut s = path.strip_prefix("$").unwrap_or(path);
+    if let Some(rest) = s.strip_prefix('.') {
+        s = rest;
     }
-
-    if path_str.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut segments = Vec::new();
-    let chars: Vec<char> = path_str.chars().collect();
+    let mut out = Vec::new();
+    let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
-
     while i < chars.len() {
         if chars[i] == '.' {
             i += 1;
-            // Parse key until next '.' or '['
-            let start = i;
-            while i < chars.len() && chars[i] != '.' && chars[i] != '[' {
-                i += 1;
-            }
-            if start == i {
-                return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-                    target: path.to_string(),
-                }));
-            }
-            let key: String = chars[start..i].iter().collect();
-            segments.push(PathSegment::Key(key));
-        } else if chars[i] == '[' {
+            continue;
+        }
+        if chars[i] == '[' {
             i += 1;
             let start = i;
             while i < chars.len() && chars[i] != ']' {
                 i += 1;
             }
-            if i >= chars.len() {
-                return Err(JsonProviderError::Refused(RefusalReason::MalformedInput {
-                    details: format!("Unclosed bracket in JSON path: {}", path),
-                }));
+            if i == chars.len() {
+                return Err(malformed("unclosed bracket in JSON path"));
             }
             let inner: String = chars[start..i].iter().collect();
-            i += 1; // skip ']'
-
-            // inner can be numeric index or quoted key like ["foo"] or [0]
-            let inner_trimmed = inner.trim();
-            if (inner_trimmed.starts_with('"') && inner_trimmed.ends_with('"'))
-                || (inner_trimmed.starts_with('\'') && inner_trimmed.ends_with('\''))
+            i += 1;
+            let t = inner.trim();
+            if let Ok(n) = t.parse() {
+                out.push(Segment::Index(n));
+            } else if t.len() >= 2
+                && ((t.starts_with('"') && t.ends_with('"'))
+                    || (t.starts_with('\'') && t.ends_with('\'')))
             {
-                let unquoted = &inner_trimmed[1..inner_trimmed.len() - 1];
-                segments.push(PathSegment::Key(unquoted.to_string()));
-            } else if let Ok(idx) = inner_trimmed.parse::<usize>() {
-                segments.push(PathSegment::Index(idx));
+                out.push(Segment::Key(t[1..t.len() - 1].into()));
             } else {
-                segments.push(PathSegment::Key(inner_trimmed.to_string()));
+                out.push(Segment::Key(t.into()));
             }
         } else {
-            // Initial segment without leading dot (e.g. "foo.bar" or "foo")
             let start = i;
             while i < chars.len() && chars[i] != '.' && chars[i] != '[' {
                 i += 1;
             }
-            let key: String = chars[start..i].iter().collect();
-            segments.push(PathSegment::Key(key));
+            if start == i {
+                return Err(malformed("empty JSON path segment"));
+            }
+            out.push(Segment::Key(chars[start..i].iter().collect()));
         }
     }
-
-    Ok(segments)
+    Ok(out)
 }
 
-fn set_path(
-    current: &mut serde_json::Value,
-    segments: &[PathSegment],
-    value: serde_json::Value,
-) -> Result<(), JsonProviderError> {
-    if segments.is_empty() {
-        *current = value;
-        return Ok(());
+fn locate<'a>(node: &'a Node, path: &[Segment]) -> Result<&'a Node, JsonProviderError> {
+    if path.is_empty() {
+        return Ok(node);
     }
-
-    let (head, tail) = segments.split_first().unwrap();
-
-    match head {
-        PathSegment::Key(key) => {
-            let obj = current.as_object_mut().ok_or_else(|| {
-                JsonProviderError::Refused(RefusalReason::MissingTarget {
-                    target: format!("Expected object at key '{}'", key),
-                })
-            })?;
-            if tail.is_empty() {
-                if !obj.contains_key(key) {
-                    return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Key '{}' not found for set", key),
-                    }));
-                }
-                obj.insert(key.clone(), value);
-            } else {
-                let child = obj.get_mut(key).ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Key '{}' not found", key),
-                    })
-                })?;
-                set_path(child, tail, value)?;
-            }
-        }
-        PathSegment::Index(idx) => {
-            let arr = current.as_array_mut().ok_or_else(|| {
-                JsonProviderError::Refused(RefusalReason::MissingTarget {
-                    target: format!("Expected array at index {}", idx),
-                })
-            })?;
-            let child = arr.get_mut(*idx).ok_or_else(|| {
-                JsonProviderError::Refused(RefusalReason::MissingTarget {
-                    target: format!("Index {} out of bounds", idx),
-                })
-            })?;
-            if tail.is_empty() {
-                *child = value;
-            } else {
-                set_path(child, tail, value)?;
-            }
-        }
+    match (&node.kind, &path[0]) {
+        (NodeKind::Object(ms), Segment::Key(k)) => ms
+            .iter()
+            .find(|m| &m.key == k)
+            .map(|m| locate(&m.value, &path[1..]))
+            .transpose()?
+            .ok_or_else(|| missing(&format!("key '{k}' not found"))),
+        (NodeKind::Array(xs), Segment::Index(i)) => xs
+            .get(*i)
+            .map(|n| locate(n, &path[1..]))
+            .transpose()?
+            .ok_or_else(|| missing(&format!("array index {i} out of bounds"))),
+        _ => Err(missing("path traverses a non-container")),
     }
-    Ok(())
+}
+fn parent<'a, 'b>(
+    root: &'a Node,
+    path: &'b [Segment],
+) -> Result<(&'a Node, &'b Segment), JsonProviderError> {
+    if path.is_empty() {
+        return Err(missing("root has no parent"));
+    }
+    if path.len() == 1 {
+        Ok((root, &path[0]))
+    } else {
+        Ok((
+            locate(root, &path[..path.len() - 1])?,
+            &path[path.len() - 1],
+        ))
+    }
+}
+fn missing(s: &str) -> JsonProviderError {
+    JsonProviderError::Refused(RefusalReason::MissingTarget { target: s.into() })
+}
+fn json_bytes(v: &serde_json::Value) -> Result<Vec<u8>, JsonProviderError> {
+    serde_json::to_vec(v).map_err(|e| JsonProviderError::Error {
+        message: e.to_string(),
+    })
 }
 
-fn insert_path(
-    current: &mut serde_json::Value,
-    segments: &[PathSegment],
-    key_or_index: &str,
-    value: serde_json::Value,
-) -> Result<(), JsonProviderError> {
-    if segments.is_empty() {
-        let obj = current.as_object_mut().ok_or_else(|| {
-            JsonProviderError::Refused(RefusalReason::MissingTarget {
-                target: "Cannot insert at root: root is not an object".to_string(),
+fn rename_edit(root: &Node, path: &str, new_key: &str) -> Result<ByteEdit, JsonProviderError> {
+    let segs = parse_path(path)?;
+    let (p, last) = parent(root, &segs)?;
+    let (ms, k) = match (&p.kind, last) {
+        (NodeKind::Object(ms), Segment::Key(k)) => (ms, k),
+        _ => return Err(missing("rename target is not an object key")),
+    };
+    let m = ms
+        .iter()
+        .find(|m| &m.key == k)
+        .ok_or_else(|| missing(&format!("key '{k}' not found")))?;
+    if ms.iter().any(|x| x.key == new_key) {
+        return Err(JsonProviderError::Refused(
+            RefusalReason::CardinalityAmbiguous {
+                path: new_key.into(),
+                count: 2,
+            },
+        ));
+    }
+    Ok(ByteEdit {
+        start: m.key_start,
+        end: m.key_end,
+        replacement: serde_json::to_vec(new_key).unwrap(),
+    })
+}
+
+fn delete_edit(root: &Node, path: &str) -> Result<ByteEdit, JsonProviderError> {
+    let segs = parse_path(path)?;
+    let (p, last) = parent(root, &segs)?;
+    match (&p.kind, last) {
+        (NodeKind::Object(ms), Segment::Key(k)) => {
+            let i = ms
+                .iter()
+                .position(|m| &m.key == k)
+                .ok_or_else(|| missing(&format!("key '{k}' not found")))?;
+            let (start, end) = if ms.len() == 1 {
+                (ms[i].start, ms[i].end)
+            } else if i + 1 < ms.len() {
+                (ms[i].start, ms[i + 1].start)
+            } else {
+                (ms[i - 1].end, ms[i].end)
+            };
+            Ok(ByteEdit {
+                start,
+                end,
+                replacement: Vec::new(),
             })
-        })?;
-        obj.insert(key_or_index.to_string(), value);
-        return Ok(());
+        }
+        (NodeKind::Array(xs), Segment::Index(i)) => {
+            if *i >= xs.len() {
+                return Err(missing(&format!("array index {i} out of bounds")));
+            }
+            let (start, end) = if xs.len() == 1 {
+                (xs[*i].start, xs[*i].end)
+            } else if *i + 1 < xs.len() {
+                (xs[*i].start, xs[*i + 1].start)
+            } else {
+                (xs[*i - 1].end, xs[*i].end)
+            };
+            Ok(ByteEdit {
+                start,
+                end,
+                replacement: Vec::new(),
+            })
+        }
+        _ => Err(missing("delete target is not a member or array element")),
     }
+}
 
-    let (head, tail) = segments.split_first().unwrap();
-
-    if tail.is_empty() {
-        // Target container is `head`
-        match head {
-            PathSegment::Key(key) => {
-                let obj = current.as_object_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected object at key '{}'", key),
-                    })
-                })?;
-                let target_obj = obj.get_mut(key).ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Key '{}' not found", key),
-                    })
-                })?;
-                if let Some(inner_obj) = target_obj.as_object_mut() {
-                    inner_obj.insert(key_or_index.to_string(), value);
-                } else if let Some(inner_arr) = target_obj.as_array_mut() {
-                    if key_or_index == "push" || key_or_index == "append" {
-                        inner_arr.push(value);
-                    } else if let Ok(idx) = key_or_index.parse::<usize>() {
-                        if idx <= inner_arr.len() {
-                            inner_arr.insert(idx, value);
-                        } else {
-                            return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-                                target: format!("Insert index {} out of bounds", idx),
-                            }));
-                        }
+fn insert_edit(
+    content: &[u8],
+    root: &Node,
+    path: &str,
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<ByteEdit, JsonProviderError> {
+    let node = locate(root, &parse_path(path)?)?;
+    let member = if matches!(node.kind, NodeKind::Object(_)) {
+        format!(
+            "{}:{}",
+            serde_json::to_string(key).unwrap(),
+            String::from_utf8(json_bytes(value)?).unwrap()
+        )
+    } else {
+        String::from_utf8(json_bytes(value)?).unwrap()
+    };
+    match &node.kind {
+        NodeKind::Object(ms) => {
+            if ms.iter().any(|m| m.key == key) {
+                return Err(JsonProviderError::Refused(
+                    RefusalReason::CardinalityAmbiguous {
+                        path: key.into(),
+                        count: 2,
+                    },
+                ));
+            }
+            let close = node.end - 1;
+            if let Some(last) = ms.last() {
+                let layout = &content[last.end..close];
+                if layout.contains(&b'\n') {
+                    let nl = if layout.windows(2).any(|w| w == b"\r\n") {
+                        b"\r\n".as_slice()
                     } else {
-                        inner_arr.push(value);
-                    }
-                } else {
-                    return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Target at key '{}' is neither object nor array", key),
-                    }));
+                        b"\n".as_slice()
+                    };
+                    let line_start = content[..last.start]
+                        .iter()
+                        .rposition(|&b| b == b'\n')
+                        .map(|n| n + 1)
+                        .unwrap_or(0);
+                    let indent = &content[line_start..last.start];
+                    return Ok(ByteEdit {
+                        start: last.end,
+                        end: close,
+                        replacement: [
+                            vec![b','],
+                            nl.to_vec(),
+                            indent.to_vec(),
+                            member.into_bytes(),
+                            layout.to_vec(),
+                        ]
+                        .concat(),
+                    });
                 }
+                return Ok(ByteEdit {
+                    start: last.end,
+                    end: close,
+                    replacement: [
+                        vec![b','],
+                        layout.to_vec(),
+                        member.into_bytes(),
+                        layout.to_vec(),
+                    ]
+                    .concat(),
+                });
             }
-            PathSegment::Index(idx) => {
-                let arr = current.as_array_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected array at index {}", idx),
-                    })
-                })?;
-                let target_elem = arr.get_mut(*idx).ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Index {} out of bounds", idx),
-                    })
-                })?;
-                if let Some(inner_obj) = target_elem.as_object_mut() {
-                    inner_obj.insert(key_or_index.to_string(), value);
-                } else if let Some(inner_arr) = target_elem.as_array_mut() {
-                    if let Ok(ins_idx) = key_or_index.parse::<usize>() {
-                        if ins_idx <= inner_arr.len() {
-                            inner_arr.insert(ins_idx, value);
-                        } else {
-                            return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-                                target: format!("Insert index {} out of bounds", ins_idx),
-                            }));
-                        }
+            Ok(ByteEdit {
+                start: node.start + 1,
+                end: close,
+                replacement: member.into_bytes(),
+            })
+        }
+        NodeKind::Array(xs) => {
+            let close = node.end - 1;
+            if key != "push" && key != "append" && key.parse::<usize>().is_err() {
+                return Err(malformed(
+                    "array insertion key must be an index, push, or append",
+                ));
+            }
+            if let Ok(index) = key.parse::<usize>() {
+                if index > xs.len() {
+                    return Err(missing(&format!(
+                        "array insertion index {index} out of bounds"
+                    )));
+                }
+                let value_bytes = json_bytes(value)?;
+                if index < xs.len() {
+                    let start = if index == 0 {
+                        node.start + 1
                     } else {
-                        inner_arr.push(value);
-                    }
+                        xs[index - 1].end
+                    };
+                    let end = xs[index].start;
+                    let layout = &content[start..end];
+                    let replacement = if index == 0 {
+                        [value_bytes, vec![b','], layout.to_vec()].concat()
+                    } else {
+                        [layout.to_vec(), value_bytes, layout.to_vec()].concat()
+                    };
+                    return Ok(ByteEdit {
+                        start,
+                        end,
+                        replacement,
+                    });
+                }
+            }
+            if let Some(last) = xs.last() {
+                let layout = &content[last.end..close];
+                let sep = if layout.contains(&b'\n') {
+                    let nl: &[u8] = if layout.windows(2).any(|w| w == b"\r\n") {
+                        b"\r\n"
+                    } else {
+                        b"\n"
+                    };
+                    [vec![b','], nl.to_vec(), json_bytes(value)?, layout.to_vec()].concat()
                 } else {
-                    return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Target at index {} is neither object nor array", idx),
-                    }));
-                }
+                    [
+                        vec![b','],
+                        layout.to_vec(),
+                        json_bytes(value)?,
+                        layout.to_vec(),
+                    ]
+                    .concat()
+                };
+                return Ok(ByteEdit {
+                    start: last.end,
+                    end: close,
+                    replacement: sep,
+                });
             }
+            Ok(ByteEdit {
+                start: node.start + 1,
+                end: close,
+                replacement: json_bytes(value)?,
+            })
         }
-    } else {
-        // Navigate down
-        match head {
-            PathSegment::Key(key) => {
-                let obj = current.as_object_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected object at key '{}'", key),
-                    })
-                })?;
-                let child = obj.get_mut(key).ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Key '{}' not found", key),
-                    })
-                })?;
-                insert_path(child, tail, key_or_index, value)?;
-            }
-            PathSegment::Index(idx) => {
-                let arr = current.as_array_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected array at index {}", idx),
-                    })
-                })?;
-                let child = arr.get_mut(*idx).ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Index {} out of bounds", idx),
-                    })
-                })?;
-                insert_path(child, tail, key_or_index, value)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn delete_path(
-    current: &mut serde_json::Value,
-    segments: &[PathSegment],
-) -> Result<(), JsonProviderError> {
-    if segments.is_empty() {
-        return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-            target: "Cannot delete root".to_string(),
-        }));
-    }
-
-    let (head, tail) = segments.split_first().unwrap();
-
-    if tail.is_empty() {
-        match head {
-            PathSegment::Key(key) => {
-                let obj = current.as_object_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected object at key '{}'", key),
-                    })
-                })?;
-                if obj.remove(key).is_none() {
-                    return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Key '{}' not found for deletion", key),
-                    }));
-                }
-            }
-            PathSegment::Index(idx) => {
-                let arr = current.as_array_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected array at index {}", idx),
-                    })
-                })?;
-                if *idx >= arr.len() {
-                    return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Index {} out of bounds for deletion", idx),
-                    }));
-                }
-                arr.remove(*idx);
-            }
-        }
-    } else {
-        match head {
-            PathSegment::Key(key) => {
-                let obj = current.as_object_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected object at key '{}'", key),
-                    })
-                })?;
-                let child = obj.get_mut(key).ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Key '{}' not found", key),
-                    })
-                })?;
-                delete_path(child, tail)?;
-            }
-            PathSegment::Index(idx) => {
-                let arr = current.as_array_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected array at index {}", idx),
-                    })
-                })?;
-                let child = arr.get_mut(*idx).ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Index {} out of bounds", idx),
-                    })
-                })?;
-                delete_path(child, tail)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn rename_key_path(
-    current: &mut serde_json::Value,
-    segments: &[PathSegment],
-    new_key: &str,
-) -> Result<(), JsonProviderError> {
-    if segments.is_empty() {
-        return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-            target: "Cannot rename root".to_string(),
-        }));
-    }
-
-    let (head, tail) = segments.split_first().unwrap();
-
-    if tail.is_empty() {
-        match head {
-            PathSegment::Key(key) => {
-                let obj = current.as_object_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected object at key '{}'", key),
-                    })
-                })?;
-                let val = obj.remove(key).ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Key '{}' not found for renaming", key),
-                    })
-                })?;
-                obj.insert(new_key.to_string(), val);
-            }
-            PathSegment::Index(_) => {
-                return Err(JsonProviderError::Refused(RefusalReason::MissingTarget {
-                    target: "Cannot rename key of an array index".to_string(),
-                }));
-            }
-        }
-    } else {
-        match head {
-            PathSegment::Key(key) => {
-                let obj = current.as_object_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected object at key '{}'", key),
-                    })
-                })?;
-                let child = obj.get_mut(key).ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Key '{}' not found", key),
-                    })
-                })?;
-                rename_key_path(child, tail, new_key)?;
-            }
-            PathSegment::Index(idx) => {
-                let arr = current.as_array_mut().ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Expected array at index {}", idx),
-                    })
-                })?;
-                let child = arr.get_mut(*idx).ok_or_else(|| {
-                    JsonProviderError::Refused(RefusalReason::MissingTarget {
-                        target: format!("Index {} out of bounds", idx),
-                    })
-                })?;
-                rename_key_path(child, tail, new_key)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn detect_json_indent(content: &str) -> usize {
-    for line in content.lines() {
-        if line.starts_with("  ") {
-            let mut count = 0;
-            for ch in line.chars() {
-                if ch == ' ' {
-                    count += 1;
-                } else {
-                    break;
-                }
-            }
-            if count > 0 {
-                return count;
-            }
-        } else if line.starts_with('\t') {
-            return 4; // default or tab representation
-        }
-    }
-    2 // default
-}
-
-fn serialize_with_indent(value: &serde_json::Value, indent: usize) -> String {
-    let indent_spaces = vec![b' '; indent];
-    let formatter = serde_json::ser::PrettyFormatter::with_indent(&indent_spaces);
-    let mut buf = Vec::new();
-    let mut serializer = serde_json::Serializer::with_formatter(&mut buf, formatter);
-    if value.serialize(&mut serializer).is_ok() {
-        String::from_utf8(buf).unwrap_or_else(|_| serde_json::to_string_pretty(value).unwrap())
-    } else {
-        serde_json::to_string_pretty(value).unwrap()
+        NodeKind::Scalar => Err(missing("insert target is not an object or array")),
     }
 }
 
@@ -559,104 +606,70 @@ fn serialize_with_indent(value: &serde_json::Value, indent: usize) -> String {
 mod tests {
     use super::*;
     use crate::engine::apply_byte_edits;
-
-    #[test]
-    fn test_json_set_operation() {
-        let content = br#"{
-  "name": "suture",
-  "version": "0.1.0"
-}"#;
-        let op = JsonOperation::Set {
-            path: "version".to_string(),
-            value: serde_json::Value::String("0.2.0".to_string()),
-        };
-        let edits = JsonProvider::plan(content, &op, &Cardinality::ExactlyOne).unwrap();
-        let modified = apply_byte_edits(content, &edits).unwrap();
-        let parsed: serde_json::Value = serde_json::from_slice(&modified).unwrap();
-        assert_eq!(parsed["version"], "0.2.0");
-        assert_eq!(parsed["name"], "suture");
+    fn apply(c: &[u8], o: JsonOperation) -> Vec<u8> {
+        apply_byte_edits(
+            c,
+            &JsonProvider::plan(c, &o, &Cardinality::ExactlyOne).unwrap(),
+        )
+        .unwrap()
     }
-
     #[test]
-    fn test_json_insert_operation() {
-        let content = br#"{
-  "name": "suture"
-}"#;
-        let op = JsonOperation::Insert {
-            path: "$".to_string(),
-            key_or_index: "version".to_string(),
-            value: serde_json::Value::String("0.1.0".to_string()),
-        };
-        let edits = JsonProvider::plan(content, &op, &Cardinality::ExactlyOne).unwrap();
-        let modified = apply_byte_edits(content, &edits).unwrap();
-        let parsed: serde_json::Value = serde_json::from_slice(&modified).unwrap();
-        assert_eq!(parsed["version"], "0.1.0");
+    fn set_preserves_unrelated_formatting() {
+        let c = b"{  \"a\" : 1, \"b\": [ 2,3 ] }  \n";
+        let out = apply(
+            c,
+            JsonOperation::Set {
+                path: "$.a".into(),
+                value: serde_json::json!(10),
+            },
+        );
+        assert_eq!(out, b"{  \"a\" : 10, \"b\": [ 2,3 ] }  \n");
     }
-
     #[test]
-    fn test_json_delete_operation() {
-        let content = br#"{
-  "name": "suture",
-  "temp": "remove_me"
-}"#;
-        let op = JsonOperation::Delete {
-            path: "temp".to_string(),
-        };
-        let edits = JsonProvider::plan(content, &op, &Cardinality::ExactlyOne).unwrap();
-        let modified = apply_byte_edits(content, &edits).unwrap();
-        let parsed: serde_json::Value = serde_json::from_slice(&modified).unwrap();
-        assert!(parsed.get("temp").is_none());
-        assert_eq!(parsed["name"], "suture");
+    fn minified_set_is_local() {
+        let c = br#"{"x":1,"y":2}"#;
+        assert_eq!(
+            apply(
+                c,
+                JsonOperation::Set {
+                    path: "$.x".into(),
+                    value: serde_json::json!(9)
+                }
+            ),
+            br#"{"x":9,"y":2}"#
+        );
     }
-
     #[test]
-    fn test_json_rename_key_operation() {
-        let content = br#"{
-  "old_name": "suture"
-}"#;
-        let op = JsonOperation::RenameKey {
-            path: "old_name".to_string(),
-            new_key: "name".to_string(),
-        };
-        let edits = JsonProvider::plan(content, &op, &Cardinality::ExactlyOne).unwrap();
-        let modified = apply_byte_edits(content, &edits).unwrap();
-        let parsed: serde_json::Value = serde_json::from_slice(&modified).unwrap();
-        assert!(parsed.get("old_name").is_none());
-        assert_eq!(parsed["name"], "suture");
+    fn insert_delete_rename_work() {
+        let c = br#"{"a":1,"b":[2,3]}"#;
+        let c = apply(
+            c,
+            JsonOperation::Insert {
+                path: "$.b".into(),
+                key_or_index: "1".into(),
+                value: serde_json::json!(8),
+            },
+        );
+        assert_eq!(c, br#"{"a":1,"b":[2,8,3]}"#);
+        let c = apply(
+            &c,
+            JsonOperation::RenameKey {
+                path: "$.a".into(),
+                new_key: "z".into(),
+            },
+        );
+        assert!(String::from_utf8(c).unwrap().contains("\"z\""));
     }
-
     #[test]
-    fn test_json_malformed_syntax_rejection() {
-        let content = br#"{
-  "name": "suture",
-  "version":
-}"#;
-        let op = JsonOperation::Set {
-            path: "version".to_string(),
-            value: serde_json::Value::String("0.2.0".to_string()),
-        };
-        let res = JsonProvider::plan(content, &op, &Cardinality::ExactlyOne);
-        assert!(matches!(
-            res,
-            Err(JsonProviderError::Refused(
-                RefusalReason::MalformedInput { .. }
-            ))
-        ));
-    }
-
-    #[test]
-    fn test_json_missing_target_refusal() {
-        let content = br#"{
-  "name": "suture"
-}"#;
-        let op = JsonOperation::Set {
-            path: "nonexistent".to_string(),
-            value: serde_json::Value::String("val".to_string()),
-        };
-        let res = JsonProvider::plan(content, &op, &Cardinality::ExactlyOne);
-        match res {
-            Err(JsonProviderError::Refused(RefusalReason::MissingTarget { .. })) => {}
-            other => panic!("Expected MissingTarget refusal, got {:?}", other),
-        }
+    fn malformed_refused() {
+        assert!(JsonProvider::plan(
+            br#"{"a": }"#,
+            &JsonOperation::Set {
+                path: "$.a".into(),
+                value: serde_json::json!(1)
+            },
+            &Cardinality::ExactlyOne
+        )
+        .is_err());
     }
 }

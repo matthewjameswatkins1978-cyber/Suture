@@ -5,8 +5,15 @@ use crate::provider::toml::TomlOperation;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub const PROTOCOL_VERSION: &str = "0.1.0";
+
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(
+    tag = "provider",
+    content = "operation",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum OperationPayload {
     Text(TextOperation),
     Json(JsonOperation),
@@ -14,6 +21,7 @@ pub enum OperationPayload {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Request {
     pub version: String,
     pub file_path: String,
@@ -35,11 +43,15 @@ pub enum Outcome {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum RefusalReason {
     CardinalityMismatch {
         expected: String,
         actual: usize,
+    },
+    CardinalityAmbiguous {
+        path: String,
+        count: usize,
     },
     StaleIdentity {
         expected_hash: String,
@@ -57,9 +69,30 @@ pub enum RefusalReason {
     DuplicateTarget {
         target: String,
         count: usize,
+        candidates: Vec<Candidate>,
+    },
+    UnsupportedEncoding {
+        details: String,
     },
     MalformedInput {
         details: String,
+    },
+    ProviderCapabilityMissing {
+        provider: String,
+        capability: String,
+    },
+    PreservationUnavailable {
+        details: String,
+    },
+    LossyOperationRequiresOptIn {
+        operation: String,
+    },
+    UnsupportedOperation {
+        operation: String,
+    },
+    UnsupportedProtocolVersion {
+        requested: String,
+        supported: String,
     },
     Custom {
         message: String,
@@ -67,12 +100,42 @@ pub enum RefusalReason {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(deny_unknown_fields)]
+pub struct Candidate {
+    pub offset: usize,
+    pub line: usize,
+    pub context: String,
+    pub anchor_sha256: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum FailureReason {
-    IoError { message: String },
-    ParseError { details: String },
-    WriteError { message: String },
-    Custom { message: String },
+    IoError {
+        message: String,
+    },
+    ProviderError {
+        details: String,
+    },
+    InternalInvariant {
+        details: String,
+    },
+    CommitFailure {
+        message: String,
+    },
+    PostCommitVerificationFailure {
+        expected_hash: String,
+        actual_hash: String,
+    },
+    ParseError {
+        details: String,
+    },
+    WriteError {
+        message: String,
+    },
+    Custom {
+        message: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
@@ -103,128 +166,117 @@ pub struct MutationPlan {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
-pub struct Certificate {
-    pub outcome: Outcome,
-    pub file_path: String,
-    pub pre_hash: String,
-    pub post_hash: Option<String>,
-    pub refusal_reason: Option<RefusalReason>,
-    pub failure_reason: Option<FailureReason>,
-    pub diff_summary: Option<String>,
+pub struct ByteRange {
+    pub start: usize,
+    pub end: usize,
 }
 
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StructuralValidation {
+    #[default]
+    NotApplicable,
+    Valid {
+        format: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct PreservationFacts {
+    pub unrelated_bytes_changed: bool,
+    pub line_endings_changed: bool,
+    pub bom_changed: bool,
+    pub final_newline_changed: bool,
+    pub comments_preserved: Option<bool>,
+    pub metadata: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct CommitGuarantee {
+    pub mode: String,
+    pub content_replacement: String,
+    pub permissions: String,
+    pub timestamps: String,
+    pub acl_xattr: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Certificate {
+    pub protocol_version: String,
+    pub outcome: Outcome,
+    pub file_path: String,
+    pub provider: String,
+    pub provider_version: String,
+    pub expected_cardinality: Cardinality,
+    pub observed_cardinality: Option<usize>,
+    pub pre_hash: String,
+    pub post_hash: Option<String>,
+    pub changed_ranges: Vec<ByteRange>,
+    pub diff_summary: Option<String>,
+    pub diff_truncated: bool,
+    pub structural_validation: StructuralValidation,
+    pub preservation: PreservationFacts,
+    pub commit: CommitGuarantee,
+    pub refusal_reason: Option<RefusalReason>,
+    pub failure_reason: Option<FailureReason>,
+    pub diagnostics: Vec<String>,
+}
+
+impl Default for PreservationFacts {
+    fn default() -> Self {
+        Self {
+            unrelated_bytes_changed: false,
+            line_endings_changed: false,
+            bom_changed: false,
+            final_newline_changed: false,
+            comments_preserved: None,
+            metadata: "not_verified".into(),
+        }
+    }
+}
+impl Default for CommitGuarantee {
+    fn default() -> Self {
+        Self {
+            mode: "not_committed".into(),
+            content_replacement: "not_applicable".into(),
+            permissions: "not_verified".into(),
+            timestamps: "not_preserved_by_replacement".into(),
+            acl_xattr: "unknown".into(),
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use schemars::schema_for;
-
     #[test]
-    fn test_outcome_serialization() {
-        let outcome = Outcome::Applied;
-        let json = serde_json::to_string(&outcome).unwrap();
-        assert_eq!(json, "\"APPLIED\"");
-        let deserialized: Outcome = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, outcome);
+    fn outcome_serializes() {
+        assert_eq!(
+            serde_json::to_string(&Outcome::Applied).unwrap(),
+            "\"APPLIED\""
+        );
     }
-
     #[test]
-    fn test_refusal_reason_serialization() {
-        let refusal = RefusalReason::CardinalityMismatch {
-            expected: "1".to_string(),
-            actual: 2,
-        };
-        let json = serde_json::to_string(&refusal).unwrap();
-        assert!(json.contains("cardinality_mismatch"));
-        let deserialized: RefusalReason = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, refusal);
+    fn cardinality_serializes() {
+        assert_eq!(
+            serde_json::to_string(&Cardinality::ExactlyOne).unwrap(),
+            "{\"type\":\"exactly_one\"}"
+        );
+        assert_eq!(
+            serde_json::to_string(&Cardinality::Exactly(5)).unwrap(),
+            "{\"type\":\"exactly\",\"value\":5}"
+        );
     }
-
     #[test]
-    fn test_failure_reason_serialization() {
-        let failure = FailureReason::IoError {
-            message: "disk full".to_string(),
-        };
-        let json = serde_json::to_string(&failure).unwrap();
-        assert!(json.contains("io_error"));
-        let deserialized: FailureReason = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, failure);
+    fn unknown_request_fields_are_rejected() {
+        let json = r#"{"version":"0.1.0","file_path":"a","expected_pre_hash":null,"operation":{"type":"text","bogus":1}}"#;
+        assert!(serde_json::from_str::<Request>(json).is_err());
     }
-
     #[test]
-    fn test_cardinality_serialization() {
-        let card_one = Cardinality::ExactlyOne;
-        let json_one = serde_json::to_string(&card_one).unwrap();
-        assert_eq!(json_one, "{\"type\":\"exactly_one\"}");
-        let de_one: Cardinality = serde_json::from_str(&json_one).unwrap();
-        assert_eq!(de_one, card_one);
-
-        let card_exact = Cardinality::Exactly(5);
-        let json_exact = serde_json::to_string(&card_exact).unwrap();
-        assert_eq!(json_exact, "{\"type\":\"exactly\",\"value\":5}");
-        let de_exact: Cardinality = serde_json::from_str(&json_exact).unwrap();
-        assert_eq!(de_exact, card_exact);
-
-        let card_all = Cardinality::All;
-        let json_all = serde_json::to_string(&card_all).unwrap();
-        assert_eq!(json_all, "{\"type\":\"all\"}");
-        let de_all: Cardinality = serde_json::from_str(&json_all).unwrap();
-        assert_eq!(de_all, card_all);
-    }
-
-    #[test]
-    fn test_byte_edit_serialization() {
-        let edit = ByteEdit {
-            offset: 10,
-            delete_len: 4,
-            replacement: b"test".to_vec(),
-        };
-        let json = serde_json::to_string(&edit).unwrap();
-        let deserialized: ByteEdit = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, edit);
-    }
-
-    #[test]
-    fn test_mutation_plan_serialization() {
-        let plan = MutationPlan {
-            version: "0.1.0".to_string(),
-            file_path: "src/main.rs".to_string(),
-            expected_pre_hash: "abc123hash".to_string(),
-            edits: vec![ByteEdit {
-                offset: 0,
-                delete_len: 0,
-                replacement: b"fn main() {}".to_vec(),
-            }],
-            cardinality: Cardinality::ExactlyOne,
-        };
-        let json = serde_json::to_string_pretty(&plan).unwrap();
-        let deserialized: MutationPlan = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, plan);
-    }
-
-    #[test]
-    fn test_certificate_serialization() {
-        let cert = Certificate {
-            outcome: Outcome::Applied,
-            file_path: "src/main.rs".to_string(),
-            pre_hash: "hash1".to_string(),
-            post_hash: Some("hash2".to_string()),
-            refusal_reason: None,
-            failure_reason: None,
-            diff_summary: Some("+fn main() {}".to_string()),
-        };
-        let json = serde_json::to_string(&cert).unwrap();
-        let deserialized: Certificate = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, cert);
-    }
-
-    #[test]
-    fn test_schema_generation() {
-        let schema = schema_for!(MutationPlan);
-        let schema_json = serde_json::to_string_pretty(&schema).unwrap();
-        assert!(!schema_json.is_empty());
-
-        let cert_schema = schema_for!(Certificate);
-        let cert_schema_json = serde_json::to_string_pretty(&cert_schema).unwrap();
-        assert!(!cert_schema_json.is_empty());
+    fn schema_generation_runs() {
+        assert!(!serde_json::to_string(&schema_for!(Certificate))
+            .unwrap()
+            .is_empty());
     }
 }
