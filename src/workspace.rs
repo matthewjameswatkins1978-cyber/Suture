@@ -488,9 +488,10 @@ mod tests {
         let t = TempDir::new().unwrap();
         let path = t.path().join("readonly.txt");
         fs::write(&path, b"old").unwrap();
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
-        permissions.set_readonly(true);
-        fs::set_permissions(&path, permissions).unwrap();
+        let original_permissions = fs::metadata(&path).unwrap().permissions();
+        let mut readonly_permissions = original_permissions.clone();
+        readonly_permissions.set_readonly(true);
+        fs::set_permissions(&path, readonly_permissions).unwrap();
         let workspace = Workspace::new(t.path()).unwrap();
         let result = workspace.write_file_atomic_checked("readonly.txt", &sha256(b"old"), b"new");
         let entries: Vec<_> = fs::read_dir(t.path())
@@ -508,9 +509,7 @@ mod tests {
             .iter()
             .any(|name| name.starts_with(".readonly.txt.")));
 
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
-        permissions.set_readonly(false);
-        fs::set_permissions(&path, permissions).unwrap();
+        fs::set_permissions(&path, original_permissions).unwrap();
     }
 
     #[cfg(target_os = "windows")]
