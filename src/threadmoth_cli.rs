@@ -28,10 +28,14 @@ use cli::{
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Command::Mutate(args) => run_request(args.request.as_deref(), false),
-        Command::Preview(args) => run_request(args.request.as_deref(), true),
-        Command::Transact(args) => run_transaction(args.request.as_deref(), args.preview),
-        Command::TransactionPreview(args) => run_transaction(args.request.as_deref(), true),
+        Command::Mutate(args) => run_request(args.request.as_deref(), false, args.summary),
+        Command::Preview(args) => run_request(args.request.as_deref(), true, args.summary),
+        Command::Transact(args) => {
+            run_transaction(args.request.as_deref(), args.preview, args.summary)
+        }
+        Command::TransactionPreview(args) => {
+            run_transaction(args.request.as_deref(), true, args.summary)
+        }
         Command::Recover => run_recover(),
         Command::Capabilities(args) => run_capabilities(args),
         Command::Examples { topic } => print_examples(topic.as_deref()),
@@ -49,19 +53,16 @@ fn main() {
     }
 }
 
-fn run_request(request_path: Option<&Path>, dry: bool) {
+fn run_request(request_path: Option<&Path>, dry: bool, summary: bool) {
     let input = match read_request_input(request_path) {
         Ok(s) => s,
         Err(RequestInputError::TooLarge(actual)) => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&empty_cert(RefusalReason::ResourceLimitExceeded {
-                    dimension: "max_request_bytes".into(),
-                    limit: MAX_REQUEST_BYTES,
-                    actual,
-                },))
-                .unwrap()
-            );
+            let certificate = empty_cert(RefusalReason::ResourceLimitExceeded {
+                dimension: "max_request_bytes".into(),
+                limit: MAX_REQUEST_BYTES,
+                actual,
+            });
+            emit_certificate(&certificate, dry, summary);
             std::process::exit(2)
         }
         Err(RequestInputError::Io(error)) => {
@@ -72,13 +73,10 @@ fn run_request(request_path: Option<&Path>, dry: bool) {
     let req: Request = match serde_json::from_str(&input) {
         Ok(r) => r,
         Err(e) => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&empty_cert(RefusalReason::MalformedInput {
-                    details: e.to_string()
-                }))
-                .unwrap()
-            );
+            let certificate = empty_cert(RefusalReason::MalformedInput {
+                details: e.to_string(),
+            });
+            emit_certificate(&certificate, dry, summary);
             std::process::exit(2)
         }
     };
@@ -97,25 +95,20 @@ fn run_request(request_path: Option<&Path>, dry: bool) {
         }
     };
     let cert = execute_request(&ws, &req, dry);
-    println!("{}", serde_json::to_string_pretty(&cert).unwrap());
+    emit_certificate(&cert, dry, summary);
     exit_for_outcome(cert.outcome);
 }
 
-fn run_transaction(request_path: Option<&Path>, dry: bool) {
+fn run_transaction(request_path: Option<&Path>, dry: bool, summary: bool) {
     let input = match read_request_input(request_path) {
         Ok(s) => s,
         Err(RequestInputError::TooLarge(actual)) => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&empty_transaction_certificate(
-                    RefusalReason::ResourceLimitExceeded {
-                        dimension: "max_request_bytes".into(),
-                        limit: MAX_REQUEST_BYTES,
-                        actual,
-                    },
-                ))
-                .unwrap()
-            );
+            let certificate = empty_transaction_certificate(RefusalReason::ResourceLimitExceeded {
+                dimension: "max_request_bytes".into(),
+                limit: MAX_REQUEST_BYTES,
+                actual,
+            });
+            emit_transaction_certificate(&certificate, dry, summary);
             std::process::exit(2)
         }
         Err(RequestInputError::Io(error)) => {
@@ -126,15 +119,10 @@ fn run_transaction(request_path: Option<&Path>, dry: bool) {
     let transaction: TransactionRequest = match serde_json::from_str(&input) {
         Ok(x) => x,
         Err(e) => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&empty_transaction_certificate(
-                    RefusalReason::MalformedInput {
-                        details: format!("transaction request parse failed: {e}"),
-                    },
-                ))
-                .unwrap()
-            );
+            let certificate = empty_transaction_certificate(RefusalReason::MalformedInput {
+                details: format!("transaction request parse failed: {e}"),
+            });
+            emit_transaction_certificate(&certificate, dry, summary);
             std::process::exit(2);
         }
     };
@@ -143,12 +131,194 @@ fn run_transaction(request_path: Option<&Path>, dry: bool) {
         Ok(w) => w,
         Err(e) => {
             eprintln!("workspace initialization failed: {e}");
-            std::process::exit(3);
+            std::process::exit(3)
         }
     };
     let certificate = threadmoth::pipeline::execute_transaction(&ws, &transaction, dry);
-    println!("{}", serde_json::to_string_pretty(&certificate).unwrap());
+    emit_transaction_certificate(&certificate, dry, summary);
     exit_for_outcome(certificate.outcome);
+}
+
+fn emit_certificate(certificate: &Certificate, dry: bool, summary: bool) {
+    if summary {
+        print_certificate_summary(certificate, dry);
+    } else {
+        println!("{}", serde_json::to_string_pretty(certificate).unwrap());
+    }
+}
+
+fn emit_transaction_certificate(certificate: &TransactionCertificate, dry: bool, summary: bool) {
+    if summary {
+        print_transaction_summary(certificate, dry);
+    } else {
+        println!("{}", serde_json::to_string_pretty(certificate).unwrap());
+    }
+}
+
+fn print_certificate_summary(certificate: &Certificate, dry: bool) {
+    println!("THREADMOTH {}", if dry { "PREVIEW" } else { "MUTATION" });
+    println!("{}", "─".repeat(72));
+    println!("Result       {}", outcome_name(&certificate.outcome));
+    if !certificate.file_path.is_empty() {
+        println!("File         {}", certificate.file_path);
+    }
+    println!(
+        "Provider     {} ({})",
+        certificate.provider, certificate.provider_version
+    );
+    if let Some(reason_code) = certificate.reason_code.as_deref() {
+        println!("Reason       {reason_code}");
+    }
+    println!(
+        "Effect       {} file(s), {} match(es), {} region(s), {} line(s), {} byte(s)",
+        certificate.effect.files,
+        certificate.effect.matches,
+        certificate.effect.changed_regions,
+        certificate.effect.changed_lines,
+        certificate.effect.changed_bytes,
+    );
+    println!(
+        "Budget       {}",
+        if certificate.effect.passed {
+            "PASS"
+        } else {
+            "REFUSED"
+        }
+    );
+    let suggestions = budget_suggestions(certificate);
+    if !suggestions.is_empty() {
+        println!("Minimum      {}", suggestions.join(", "));
+    }
+    if certificate.preservation.original_newline_profile != "unknown"
+        || certificate.preservation.result_newline_profile != "unknown"
+    {
+        println!(
+            "Newlines     {} -> {}",
+            certificate.preservation.original_newline_profile,
+            certificate.preservation.result_newline_profile
+        );
+    }
+    println!(
+        "Preservation unrelated_bytes_changed={} bom_changed={} final_newline_changed={}",
+        certificate.preservation.unrelated_bytes_changed,
+        certificate.preservation.bom_changed,
+        certificate.preservation.final_newline_changed,
+    );
+    if !certificate.pre_hash.is_empty() {
+        println!("Pre SHA-256  {}", certificate.pre_hash);
+    }
+    if let Some(post_hash) = certificate.post_hash.as_deref() {
+        println!("Post SHA-256 {post_hash}");
+    }
+    println!("Commit       {}", certificate.commit.mode);
+    if certificate.diff_summary.is_some() {
+        println!(
+            "Diff         available in full JSON certificate{}",
+            if certificate.diff_truncated {
+                " (bounded/truncated)"
+            } else {
+                ""
+            }
+        );
+    }
+    if !certificate.diagnostics.is_empty() {
+        println!("Diagnostics  {}", certificate.diagnostics.join(" | "));
+    }
+}
+
+fn print_transaction_summary(certificate: &TransactionCertificate, dry: bool) {
+    println!(
+        "THREADMOTH TRANSACTION {}",
+        if dry { "PREVIEW" } else { "RESULT" }
+    );
+    println!("{}", "─".repeat(72));
+    println!("Result       {}", outcome_name(&certificate.outcome));
+    if !certificate.transaction_id.is_empty() {
+        println!("Transaction  {}", certificate.transaction_id);
+    }
+    println!("Members      {}", certificate.certificates.len());
+    println!("Guarantee    {}", certificate.transaction_guarantee);
+    println!("Recovery     {}", certificate.rollback_state);
+    if let Some(reason_code) = certificate.reason_code.as_deref() {
+        println!("Reason       {reason_code}");
+    }
+    if !certificate.certificates.is_empty() {
+        println!();
+        println!("{:<36} {:>10} {:>9}", "File", "Result", "Regions");
+        println!("{}", "─".repeat(72));
+        for member in &certificate.certificates {
+            println!(
+                "{:<36} {:>10} {:>9}",
+                truncate_chars(&member.file_path, 36),
+                outcome_name(&member.outcome),
+                member.effect.changed_regions,
+            );
+        }
+    }
+}
+
+fn budget_suggestions(certificate: &Certificate) -> Vec<String> {
+    let budget = &certificate.budget;
+    let effect = &certificate.effect;
+    let mut values = Vec::new();
+    push_budget_suggestion(&mut values, "max_files", budget.max_files, effect.files);
+    push_budget_suggestion(
+        &mut values,
+        "max_matches",
+        budget.max_matches,
+        effect.matches,
+    );
+    push_budget_suggestion(
+        &mut values,
+        "max_changed_regions",
+        budget.max_changed_regions,
+        effect.changed_regions,
+    );
+    push_budget_suggestion(
+        &mut values,
+        "max_changed_lines",
+        budget.max_changed_lines,
+        effect.changed_lines,
+    );
+    push_budget_suggestion(
+        &mut values,
+        "max_changed_bytes",
+        budget.max_changed_bytes,
+        effect.changed_bytes,
+    );
+    values
+}
+
+fn push_budget_suggestion(
+    values: &mut Vec<String>,
+    name: &str,
+    limit: Option<usize>,
+    actual: usize,
+) {
+    if limit.is_some_and(|limit| actual > limit) {
+        values.push(format!("{name}={actual}"));
+    }
+}
+
+fn outcome_name(outcome: &Outcome) -> &'static str {
+    match outcome {
+        Outcome::Applied => "APPLIED",
+        Outcome::NoChange => "NO_CHANGE",
+        Outcome::Refused => "REFUSED",
+        Outcome::Failed => "FAILED",
+    }
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.into();
+    }
+    let mut output = value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    output.push('…');
+    output
 }
 
 fn exit_for_outcome(outcome: Outcome) {
@@ -330,7 +500,7 @@ fn run_inspect(path: &Path) {
         Ok(w) => w,
         Err(e) => {
             eprintln!("workspace initialization failed: {e}");
-            std::process::exit(3);
+            std::process::exit(3)
         }
     };
     match ws.read_file(path.as_ref()) {
@@ -540,5 +710,36 @@ fn empty_transaction_certificate(reason: RefusalReason) -> TransactionCertificat
         refusal_reason: Some(reason.clone()),
         failure_reason: None,
         reason_code: Some(reason.code().into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn budget_summary_reports_all_undersized_dimensions() {
+        let mut certificate = empty_cert(RefusalReason::EffectBudgetExceeded {
+            dimension: "max_changed_regions".into(),
+            limit: 1,
+            actual: 3,
+        });
+        certificate.budget.max_changed_regions = Some(1);
+        certificate.budget.max_changed_lines = Some(2);
+        certificate.effect.changed_regions = 3;
+        certificate.effect.changed_lines = 7;
+        certificate.effect.passed = false;
+        assert_eq!(
+            budget_suggestions(&certificate),
+            vec!["max_changed_regions=3", "max_changed_lines=7"]
+        );
+    }
+
+    #[test]
+    fn outcome_names_match_protocol_vocabulary() {
+        assert_eq!(outcome_name(&Outcome::Applied), "APPLIED");
+        assert_eq!(outcome_name(&Outcome::NoChange), "NO_CHANGE");
+        assert_eq!(outcome_name(&Outcome::Refused), "REFUSED");
+        assert_eq!(outcome_name(&Outcome::Failed), "FAILED");
     }
 }

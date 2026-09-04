@@ -8,7 +8,7 @@ pub const THREADMOTH_VERSION: &str = env!("CARGO_PKG_VERSION");
     version = THREADMOTH_VERSION,
     about = "Fast, deterministic structural search and rewrite for AI agents.",
     long_about = "Threadmoth changes exactly the state a request authorizes, refuses ambiguity, and returns a certificate describing what was observed and what actually changed.",
-    after_help = "Start with: threadmoth suggest PATH\nInspect capabilities: threadmoth capabilities\nGenerate shell completion: threadmoth completions <shell>\nRun checks: threadmoth benchmark --tough",
+    after_help = "Start with: threadmoth suggest PATH\nInspect capabilities: threadmoth capabilities\nPreview for a human: threadmoth preview --request request.json --summary\nGenerate shell completion: threadmoth completions <shell>\nRun checks: threadmoth benchmark --tough",
     propagate_version = true,
     disable_help_subcommand = true,
     arg_required_else_help = true
@@ -21,14 +21,23 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Apply one verified mutation.
-    #[command(alias = "apply")]
+    #[command(
+        alias = "apply",
+        after_help = "Example: threadmoth mutate --request request.json\nHuman summary: threadmoth mutate --request request.json --summary"
+    )]
     Mutate(RequestArgs),
 
     /// Preview a mutation without writing.
-    #[command(alias = "dry-run")]
+    #[command(
+        alias = "dry-run",
+        after_help = "Machine certificate: threadmoth preview --request request.json\nCompact human view: threadmoth preview --request request.json --summary"
+    )]
     Preview(RequestArgs),
 
     /// Apply or preview a guarded multi-file transaction.
+    #[command(
+        after_help = "Preview: threadmoth transact --request transaction.json --preview\nCompact human view: threadmoth transact --request transaction.json --preview --summary"
+    )]
     Transact(TransactionArgs),
 
     /// Legacy alias for `transact --preview`.
@@ -39,6 +48,9 @@ pub enum Command {
     Recover,
 
     /// Show machine-readable capabilities, optionally for one file.
+    #[command(
+        after_help = "Examples:\n  threadmoth capabilities\n  threadmoth capabilities code\n  threadmoth capabilities --for src/main.rs\n  threadmoth capabilities --json --all"
+    )]
     Capabilities(CapabilitiesArgs),
 
     /// Show request examples.
@@ -48,6 +60,9 @@ pub enum Command {
     },
 
     /// Run correctness-checked performance and safety checks.
+    #[command(
+        after_help = "Canonical forms:\n  threadmoth benchmark\n  threadmoth benchmark --quick\n  threadmoth benchmark --tough\n  threadmoth benchmark --torture\nAdd --json for machine output."
+    )]
     Benchmark(BenchmarkArgs),
 
     /// Legacy alias for `benchmark --torture`.
@@ -71,6 +86,9 @@ pub enum Command {
     },
 
     /// Suggest a safe request shape for a workspace file or refusal.
+    #[command(
+        after_help = "Examples:\n  threadmoth suggest Cargo.toml --goal set-value --at package.name\n  threadmoth suggest --from-refusal refusal.json"
+    )]
     Suggest(SuggestArgs),
 
     /// Inspect file identity, encoding and newline facts.
@@ -87,6 +105,9 @@ pub enum Command {
     Doctor,
 
     /// Generate shell completion for Threadmoth.
+    #[command(
+        after_help = "Current-session examples:\n  PowerShell: threadmoth completions powershell | Out-String | Invoke-Expression\n  Bash: source <(threadmoth completions bash)"
+    )]
     Completions {
         /// Shell to generate completion for.
         #[arg(value_enum)]
@@ -109,6 +130,10 @@ pub struct RequestArgs {
     /// Read the JSON request from a file instead of stdin.
     #[arg(short = 'r', long, value_hint = ValueHint::FilePath)]
     pub request: Option<std::path::PathBuf>,
+
+    /// Print a compact human summary instead of the full JSON certificate.
+    #[arg(long)]
+    pub summary: bool,
 }
 
 #[derive(Args, Debug)]
@@ -120,6 +145,10 @@ pub struct TransactionArgs {
     /// Preview the transaction without committing it.
     #[arg(short = 'n', long)]
     pub preview: bool,
+
+    /// Print a compact human summary instead of the full JSON certificate.
+    #[arg(long)]
+    pub summary: bool,
 }
 
 #[derive(Args, Debug)]

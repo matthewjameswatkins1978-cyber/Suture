@@ -20,11 +20,17 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Add `--json` for machine-readable output. The tough profile adds 5 MiB and 32 MiB files, a two-million-byte long-line case, a many-line case, and 250 repeated small-file checks. Every benchmark reports correctness before timing and exits non-zero if an expected successful mutation is wrong.
+Add `--json` for machine-readable output. The tough profile adds 5 MiB and 32 MiB files, a two-million-byte long-line case, a many-line case, and 250 repeated small-file checks. Every benchmark checks correctness and exits non-zero if an expected successful mutation is wrong.
 
-The torture mode runs deterministic apply/refusal/stale-identity/transaction-cleanup checks, symlink containment where the host permits link creation, and FOOTGUN-100. It emits visible states such as `SETTING_UP`, `RUNNING`, `CHECKING`, `PASS`, `FAIL`, and `SKIP`; a host capability skip is not treated as a product failure, while any failed safety case is non-zero.
+Threadmoth 1.3.1 gives benchmark and torture runs a compact human presentation while preserving the existing structured `--json` report for scripts and agents. A human benchmark now ends with a one-line release signal such as:
 
-For Threadmoth 1.3, the older forms `threadmoth benchmark tough` and `threadmoth torture` remain compatibility routes, but the flag forms above are canonical.
+```text
+PASS  8/8 cases · 0 wrong mutations · correctness checked
+```
+
+The torture mode runs deterministic apply/refusal/stale-identity/transaction-cleanup checks, symlink containment where the host permits link creation, and FOOTGUN-100. Its human output uses the same table-and-summary presentation as benchmark. A host capability skip is not treated as a product failure, while any failed safety case is non-zero.
+
+For compatibility, the older forms `threadmoth benchmark tough` and `threadmoth torture` remain accepted, but the flag forms above are canonical.
 
 Results are environment-dependent. The checked-in harness is the reproducible evidence source; future runs should record machine, Rust version, and output rather than treating local numbers as universal claims.
 
@@ -42,13 +48,6 @@ This run was supplied from a live tough-profile execution on 2026-09-04:
 | many_lines_2m | 1,999,992 | 10 | 0 | 28,951.9 us |
 | long_line_2m | 2,000,006 | 5 | 0 | 17,139.8 us |
 | small_files_250 | 2,500 total | 1 batch | 0 | 5,253.5 us |
-
-The run completed with:
-
-```text
-state: CHECKING wrong_successful_mutations=0
-state: PASS profile=tough
-```
 
 The important correctness result is **zero wrong successful mutations across the entire tough profile**.
 
@@ -93,4 +92,4 @@ An earlier release-candidate command was run on 2026-09-04 on a Windows x86_64 h
 | long_line_2m | 2,000,006 | 5 | 0 | 16,046.4 us |
 | small_files_250 | 2,500 total | 250 | 0 | 2,580.8 us |
 
-These earlier measurements are retained for history, but the README now uses the current observed tough-profile run above.
+These earlier measurements are retained for history, but the README uses the current observed tough-profile run above until a new release run is recorded.

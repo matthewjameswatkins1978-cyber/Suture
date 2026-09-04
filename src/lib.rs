@@ -8,6 +8,7 @@ pub mod metadata;
 pub mod path;
 pub mod pattern;
 pub mod pipeline;
+mod presentation;
 pub mod protocol;
 pub mod provider;
 pub mod recovery;

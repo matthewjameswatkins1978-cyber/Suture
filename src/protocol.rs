@@ -32,6 +32,7 @@ pub enum OperationPayload {
     Pattern(PatternOperation),
     Markdown(MarkdownOperation),
     Yaml(YamlOperation),
+    #[serde(rename = "filesystem", alias = "file")]
     File(FileOperation),
     Code(CodeOperation),
     Dotenv(DotenvOperation),
@@ -428,6 +429,7 @@ impl Default for CommitGuarantee {
 mod tests {
     use super::*;
     use schemars::schema_for;
+
     #[test]
     fn outcome_serializes() {
         assert_eq!(
@@ -435,6 +437,7 @@ mod tests {
             "\"APPLIED\""
         );
     }
+
     #[test]
     fn cardinality_serializes() {
         assert_eq!(
@@ -446,6 +449,19 @@ mod tests {
             "{\"type\":\"exactly\",\"value\":5}"
         );
     }
+
+    #[test]
+    fn filesystem_is_canonical_and_file_remains_a_compatibility_alias() {
+        let legacy = r#"{"provider":"file","operation":{"type":"create_file","expected_absent":true,"content":[104,105]}}"#;
+        let operation: OperationPayload = serde_json::from_str(legacy).unwrap();
+        let rendered = serde_json::to_string(&operation).unwrap();
+        assert!(rendered.contains("\"provider\":\"filesystem\""));
+
+        let canonical = r#"{"provider":"filesystem","operation":{"type":"create_file","expected_absent":true,"content":[104,105]}}"#;
+        let canonical_operation: OperationPayload = serde_json::from_str(canonical).unwrap();
+        assert_eq!(operation, canonical_operation);
+    }
+
     #[test]
     fn unknown_request_fields_are_rejected() {
         let json = r#"{"version":"0.1.0","file_path":"a","expected_pre_hash":null,"operation":{"type":"text","bogus":1}}"#;
@@ -459,6 +475,7 @@ mod tests {
         let namespace = r#"{"type":"native","future":true}"#;
         assert!(serde_json::from_str::<PathNamespace>(namespace).is_err());
     }
+
     #[test]
     fn schema_generation_runs() {
         assert!(!serde_json::to_string(&schema_for!(Certificate))
