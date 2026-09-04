@@ -27,7 +27,9 @@ fn request(path: &str, operation: OperationPayload) -> Request {
 #[test]
 fn capability_name_matches_canonical_filesystem_request_provider() {
     let providers = metadata::provider_metadata();
-    assert!(providers.iter().any(|provider| provider.name == "filesystem"));
+    assert!(providers
+        .iter()
+        .any(|provider| provider.name == "filesystem"));
     assert!(!providers.iter().any(|provider| provider.name == "file"));
 
     let legacy = r#"{
@@ -39,7 +41,8 @@ fn capability_name_matches_canonical_filesystem_request_provider() {
             "operation":{"type":"create_file","expected_absent":true,"content":[104,105,10]}
         }
     }"#;
-    let parsed: Request = serde_json::from_str(legacy).expect("legacy file provider remains accepted");
+    let parsed: Request =
+        serde_json::from_str(legacy).expect("legacy file provider remains accepted");
     let rendered = serde_json::to_string(&parsed).unwrap();
     assert!(rendered.contains("\"provider\":\"filesystem\""));
 }
@@ -103,7 +106,10 @@ fn multi_hunk_patch_refuses_small_budget_then_applies_without_whole_file_churn()
 
     let refused = execute_request(&workspace, &req, false);
     assert_eq!(refused.outcome, Outcome::Refused);
-    assert_eq!(refused.reason_code.as_deref(), Some("EFFECT_BUDGET_EXCEEDED"));
+    assert_eq!(
+        refused.reason_code.as_deref(),
+        Some("EFFECT_BUDGET_EXCEEDED")
+    );
     assert_eq!(refused.effect.changed_regions, 2);
     assert!(!refused.effect.passed);
     assert_eq!(fs::read(temp.path().join(path)).unwrap(), original);
@@ -115,10 +121,7 @@ fn multi_hunk_patch_refuses_small_budget_then_applies_without_whole_file_churn()
     assert!(!applied.preservation.unrelated_bytes_changed);
 
     let result = fs::read_to_string(temp.path().join(path)).unwrap();
-    assert_eq!(
-        result,
-        "fn one() {}\n\nfn untouched() {}\n\nfn two() {}\n"
-    );
+    assert_eq!(result, "fn one() {}\n\nfn untouched() {}\n\nfn two() {}\n");
     assert!(result.contains("\n\nfn untouched() {}\n\n"));
 }
 
@@ -141,7 +144,10 @@ fn mixed_newline_and_format_drift_can_be_repaired_as_bounded_sequential_operatio
         }),
     );
     newline.cardinality = Cardinality::All;
-    assert_eq!(execute_request(&workspace, &newline, false).outcome, Outcome::Applied);
+    assert_eq!(
+        execute_request(&workspace, &newline, false).outcome,
+        Outcome::Applied
+    );
 
     let patch = concat!(
         "--- a/mixed.rs\n",
