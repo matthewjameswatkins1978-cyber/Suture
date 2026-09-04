@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Threadmoth field testing guide
+    url: https://github.com/matthewjameswatkins1978-cyber/Suture/blob/main/FIELD_TESTING.md
+    about: Start here for the five-minute test, reporting guidance, and current field-test goals.
