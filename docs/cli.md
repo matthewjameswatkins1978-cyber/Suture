@@ -1,6 +1,6 @@
 # Threadmoth CLI
 
-Threadmoth 1.3 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
+Threadmoth 1.3.1 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
 
 ## Benchmark commands
 
@@ -21,9 +21,9 @@ threadmoth benchmark -t
 threadmoth benchmark -x
 ```
 
-Add `--json` (or `-j`) for machine-readable output.
+Add `--json` (or `-j`) for machine-readable output. Without `--json`, benchmark and torture use the same compact human table and final PASS/FAIL summary.
 
-For compatibility, Threadmoth 1.3 still accepts:
+For compatibility, Threadmoth still accepts:
 
 ```text
 threadmoth benchmark tough
@@ -31,6 +31,43 @@ threadmoth torture
 ```
 
 New documentation and automation should prefer the canonical flag forms.
+
+## Mutation output
+
+Mutation commands continue to return the full JSON certificate by default so existing agent and script integrations do not change behaviour in a patch release:
+
+```text
+threadmoth preview --request request.json
+threadmoth mutate --request request.json
+threadmoth transact --request transaction.json --preview
+```
+
+For a compact human view, add `--summary`:
+
+```text
+threadmoth preview --request request.json --summary
+threadmoth mutate --request request.json --summary
+threadmoth transact --request transaction.json --preview --summary
+```
+
+The summary shows the outcome, provider, effect size, budget result, newline/preservation facts, hashes, and commit state without dumping the bounded diff. If a declared effect budget is too small, the summary lists the exact minimum values implied by the prepared plan for every undersized numeric dimension. Threadmoth never changes the caller's budget automatically.
+
+## Provider naming
+
+`filesystem` is the canonical lifecycle provider name in capabilities, schema output, certificates, and new requests:
+
+```json
+{
+  "provider": "filesystem",
+  "operation": {
+    "type": "create_file",
+    "expected_absent": true,
+    "content": [104, 105, 10]
+  }
+}
+```
+
+Threadmoth 1.3.1 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
 
 ## Shell completion
 
@@ -75,12 +112,14 @@ Save the output as `threadmoth.fish` in your normal fish completions directory.
 
 ## Help
 
-All subcommands support generated help:
+All subcommands support generated help, and the main high-frequency commands include concrete examples in their long help:
 
 ```text
 threadmoth --help
 threadmoth mutate --help
+threadmoth preview --help
 threadmoth benchmark --help
+threadmoth capabilities --help
 ```
 
 The existing Threadmoth help-search surface remains available:
@@ -130,4 +169,4 @@ threadmoth doctor
 
 ## Compatibility policy
 
-Threadmoth 1.3 keeps the important pre-1.3 spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, and `transaction-preview`. They are not the preferred documentation surface, but existing agent scripts do not need an immediate flag-day migration.
+Threadmoth 1.3.1 keeps the important pre-1.3 spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. They are not the preferred documentation surface, but existing agent scripts do not need an immediate flag-day migration.
