@@ -103,13 +103,11 @@ fn run_transaction(request_path: Option<&Path>, dry: bool, summary: bool) {
     let input = match read_request_input(request_path) {
         Ok(s) => s,
         Err(RequestInputError::TooLarge(actual)) => {
-            let certificate = empty_transaction_certificate(
-                RefusalReason::ResourceLimitExceeded {
-                    dimension: "max_request_bytes".into(),
-                    limit: MAX_REQUEST_BYTES,
-                    actual,
-                },
-            );
+            let certificate = empty_transaction_certificate(RefusalReason::ResourceLimitExceeded {
+                dimension: "max_request_bytes".into(),
+                limit: MAX_REQUEST_BYTES,
+                actual,
+            });
             emit_transaction_certificate(&certificate, dry, summary);
             std::process::exit(2)
         }
@@ -133,7 +131,7 @@ fn run_transaction(request_path: Option<&Path>, dry: bool, summary: bool) {
         Ok(w) => w,
         Err(e) => {
             eprintln!("workspace initialization failed: {e}");
-            std::process::exit(3);
+            std::process::exit(3)
         }
     };
     let certificate = threadmoth::pipeline::execute_transaction(&ws, &transaction, dry);
@@ -149,11 +147,7 @@ fn emit_certificate(certificate: &Certificate, dry: bool, summary: bool) {
     }
 }
 
-fn emit_transaction_certificate(
-    certificate: &TransactionCertificate,
-    dry: bool,
-    summary: bool,
-) {
+fn emit_transaction_certificate(certificate: &TransactionCertificate, dry: bool, summary: bool) {
     if summary {
         print_transaction_summary(certificate, dry);
     } else {
@@ -162,10 +156,7 @@ fn emit_transaction_certificate(
 }
 
 fn print_certificate_summary(certificate: &Certificate, dry: bool) {
-    println!(
-        "THREADMOTH {}",
-        if dry { "PREVIEW" } else { "MUTATION" }
-    );
+    println!("THREADMOTH {}", if dry { "PREVIEW" } else { "MUTATION" });
     println!("{}", "─".repeat(72));
     println!("Result       {}", outcome_name(&certificate.outcome));
     if !certificate.file_path.is_empty() {
