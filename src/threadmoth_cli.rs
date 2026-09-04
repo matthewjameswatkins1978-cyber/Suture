@@ -55,13 +55,11 @@ fn run_request(request_path: Option<&Path>, dry: bool) {
         Err(RequestInputError::TooLarge(actual)) => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&empty_cert(
-                    RefusalReason::ResourceLimitExceeded {
-                        dimension: "max_request_bytes".into(),
-                        limit: MAX_REQUEST_BYTES,
-                        actual,
-                    },
-                ))
+                serde_json::to_string_pretty(&empty_cert(RefusalReason::ResourceLimitExceeded {
+                    dimension: "max_request_bytes".into(),
+                    limit: MAX_REQUEST_BYTES,
+                    actual,
+                },))
                 .unwrap()
             );
             std::process::exit(2)
@@ -425,7 +423,12 @@ fn current_exe_on_path() -> bool {
 
 fn run_completions(shell: CompletionShell) {
     let mut command = Cli::command();
-    generate(shell.into(), &mut command, "threadmoth", &mut io::stdout());
+    generate::<clap_complete::Shell, _>(
+        shell.into(),
+        &mut command,
+        "threadmoth",
+        &mut io::stdout(),
+    );
 }
 
 fn run_manpage(output: Option<&Path>) {
