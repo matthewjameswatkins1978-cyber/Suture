@@ -20,6 +20,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
+      - run: cargo run --release -- benchmark quick --json
+      - run: cargo run --release -- torture --json
       - name: Package Unix
         if: runner.os != 'Windows'
         run: tar -czf ${{ matrix.artifact }}.tar.gz -C target/release suture
