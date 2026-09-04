@@ -1,25 +1,36 @@
 # Benchmark report
 
-The release binary includes the correctness-checked benchmark and torture modules. They measure deterministic local execution, not AI token savings or a model comparison.
+The release binary includes correctness-checked benchmark and torture modes. They measure deterministic local execution, not AI token savings or a model comparison.
 
-The primary falsification metric is **wrong mutation reported as successful**. The harness checks expected bytes for successful mutations and refusal for malformed, ambiguous, and stale cases. It also records certificate size and elapsed time for a tiny text file, roughly 30 KB, and roughly 1 MB with a tiny edit.
+The primary falsification metric is **wrong mutation reported as successful**. The harness checks expected bytes for successful mutations and refusal for malformed, ambiguous, and stale cases. It also records elapsed time across increasingly difficult file shapes.
 
 Run the standard benchmark and the safety suite:
 
 ```text
 threadmoth benchmark
-threadmoth torture
+threadmoth benchmark --torture
 ```
 
-The benchmark accepts `quick`, `standard` (the default), or `tough` profiles. Add `--json` for machine-readable output. The tough profile adds 5 MiB and 32 MiB files, a two-million-byte long-line case, a many-line case, and 250 repeated small-file checks. Every benchmark reports correctness before timing and exits non-zero if an expected successful mutation is wrong.
+The benchmark modes are:
 
-The torture command runs deterministic apply/refusal/stale-identity/transaction-cleanup checks, symlink containment where the host permits link creation, and FOOTGUN-100. It emits visible states such as `SETTING_UP`, `RUNNING`, `CHECKING`, `PASS`, `FAIL`, and `SKIP`; a host capability skip is not treated as a product failure, while any failed safety case is non-zero.
+```text
+threadmoth benchmark --quick
+threadmoth benchmark
+threadmoth benchmark --tough
+threadmoth benchmark --torture
+```
+
+Add `--json` for machine-readable output. The tough profile adds 5 MiB and 32 MiB files, a two-million-byte long-line case, a many-line case, and 250 repeated small-file checks. Every benchmark reports correctness before timing and exits non-zero if an expected successful mutation is wrong.
+
+The torture mode runs deterministic apply/refusal/stale-identity/transaction-cleanup checks, symlink containment where the host permits link creation, and FOOTGUN-100. It emits visible states such as `SETTING_UP`, `RUNNING`, `CHECKING`, `PASS`, `FAIL`, and `SKIP`; a host capability skip is not treated as a product failure, while any failed safety case is non-zero.
+
+For Threadmoth 1.3, the older forms `threadmoth benchmark tough` and `threadmoth torture` remain compatibility routes, but the flag forms above are canonical.
 
 Results are environment-dependent. The checked-in harness is the reproducible evidence source; future runs should record machine, Rust version, and output rather than treating local numbers as universal claims.
 
 ## Current observed Threadmoth 1.2 tough-profile run
 
-This run was supplied from a live `threadmoth benchmark tough` execution on 2026-09-04:
+This run was supplied from a live tough-profile execution on 2026-09-04:
 
 | case | bytes | iterations | wrong applied | average |
 |---|---:|---:|---:|---:|
