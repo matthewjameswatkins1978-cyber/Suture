@@ -21,6 +21,7 @@ use crate::provider::toml::{TomlProvider, TomlProviderError};
 use crate::provider::yaml::{self, YamlError};
 use crate::recovery::{self, Journal, JournalEntry};
 use crate::workspace::{Workspace, WorkspaceError};
+use memchr::memchr_iter;
 
 pub fn execute_pipeline(
     workspace: &Workspace,
@@ -278,8 +279,8 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
                 )
             }
         };
-        let actual = compute_sha256(&landed);
         if landed != candidate {
+            let actual = compute_sha256(&landed);
             return failure(
                 request,
                 &file_path,
@@ -725,8 +726,8 @@ pub fn execute_transaction(
                 };
             }
         };
-        let actual_hash = compute_sha256(&landed);
         if landed != entry.candidate {
+            let actual_hash = compute_sha256(&landed);
             let mut rollback_ok = true;
             for prior in committed.iter().rev() {
                 if workspace
@@ -1045,8 +1046,8 @@ fn execute_single_file_transaction(
                     };
                 }
             };
-            let actual_hash = compute_sha256(&landed);
             if landed != journal.entries[0].candidate {
+                let actual_hash = compute_sha256(&landed);
                 return TransactionCertificate {
                     protocol_version: transaction.version.clone(),
                     transaction_id: transaction.transaction_id.clone(),
@@ -1349,6 +1350,7 @@ fn execute_file_operation(
         );
     }
     let source = workspace.resolve_path(file_path);
+    let mut expected_rename_content = None;
     let (pre_hash, post_hash, effect) = match operation {
         FileOperation::CreateFile {
             expected_absent,
@@ -1508,6 +1510,7 @@ fn execute_file_operation(
                     pre,
                 );
             }
+            expected_rename_content = Some(original.clone());
             (
                 pre,
                 Some(compute_sha256(&original)),
@@ -1632,9 +1635,7 @@ fn execute_file_operation(
                         }
                     };
                 match workspace.read_file(destination_path) {
-                    Ok(landed)
-                        if compute_sha256(&landed) == post_hash.clone().unwrap_or_default() =>
-                    {
+                    Ok(landed) if expected_rename_content.as_deref() == Some(landed.as_slice()) => {
                         Ok(())
                     }
                     Ok(landed) => Err(compute_sha256(&landed)),
@@ -1844,19 +1845,18 @@ fn changed_ranges(edits: &[ByteEdit]) -> Vec<ByteRange> {
 }
 
 fn changed_line_ranges(original: &[u8], edits: &[ByteEdit]) -> Vec<ByteRange> {
+    // Index newlines once. The previous implementation rescanned every prefix
+    // for every edit, which made many-edit plans unnecessarily quadratic in the
+    // source size. `partition_point` preserves the old exclusive-prefix count:
+    // a newline at the edit boundary belongs after the boundary.
+    let newline_positions: Vec<usize> = memchr_iter(b'\n', original).collect();
     edits
         .iter()
         .map(|edit| {
-            let start = original[..edit.start.min(original.len())]
-                .iter()
-                .filter(|b| **b == b'\n')
-                .count()
-                + 1;
-            let end = original[..edit.end.min(original.len())]
-                .iter()
-                .filter(|b| **b == b'\n')
-                .count()
-                + 1;
+            let start_offset = edit.start.min(original.len());
+            let end_offset = edit.end.min(original.len());
+            let start = newline_positions.partition_point(|&position| position < start_offset) + 1;
+            let end = newline_positions.partition_point(|&position| position < end_offset) + 1;
             ByteRange { start, end }
         })
         .collect()
@@ -2190,6 +2190,11 @@ fn budget_violation(effect: &EffectUsage, budget: &EffectBudget) -> Option<(Stri
 }
 
 fn changed_line_count(original: &[u8], candidate: &[u8]) -> usize {
+    // Keep the general-purpose diff here deliberately. Its old/new line
+    // contribution is part of the effect-budget contract, and an edit-derived
+    // approximation is not generally equivalent when similar aligns equal
+    // lines outside the edited byte ranges. Replace this only with
+    // differential/property evidence covering those alignment cases.
     let old = String::from_utf8_lossy(original);
     let new = String::from_utf8_lossy(candidate);
     similar::TextDiff::from_lines(&old, &new)
@@ -2317,5 +2322,48 @@ mod tests {
         let c = execute_request(&w, &r, true);
         assert_eq!(c.outcome, Outcome::Applied);
         assert_eq!(w.read_file("x.txt").unwrap(), b"a b");
+    }
+
+    fn reference_changed_line_ranges(original: &[u8], edits: &[ByteEdit]) -> Vec<ByteRange> {
+        edits
+            .iter()
+            .map(|edit| ByteRange {
+                start: original[..edit.start.min(original.len())]
+                    .iter()
+                    .filter(|byte| **byte == b'\n')
+                    .count()
+                    + 1,
+                end: original[..edit.end.min(original.len())]
+                    .iter()
+                    .filter(|byte| **byte == b'\n')
+                    .count()
+                    + 1,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn changed_line_ranges_match_the_previous_prefix_scan() {
+        let original = b"first\nsecond\n\nfourth\nlast";
+        let mut edits = Vec::new();
+        for start in 0..=original.len() {
+            for end in start..=original.len() {
+                edits.push(ByteEdit {
+                    start,
+                    end,
+                    replacement: Vec::new(),
+                });
+            }
+        }
+        edits.push(ByteEdit {
+            start: original.len() + 10,
+            end: original.len() + 20,
+            replacement: Vec::new(),
+        });
+
+        assert_eq!(
+            changed_line_ranges(original, &edits),
+            reference_changed_line_ranges(original, &edits)
+        );
     }
 }
