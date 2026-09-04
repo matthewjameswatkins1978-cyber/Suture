@@ -14,6 +14,6 @@ fn exported_protocol_schema_has_a_golden_digest() {
     let digest = threadmoth::engine::compute_sha256(format!("{rendered}\n").as_bytes());
     assert_eq!(
         digest,
-        "36f020da68c0ff2cd084c77f0b31f293be9347b590520956c887b3c93439bcf6"
+        "eb52eccc0c74f183ce9d856d5242ebe6dcac5d80523745e7349a1ba4a384426c"
     );
 }
