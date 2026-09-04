@@ -317,7 +317,7 @@ fn print_human_report(report: &Report) {
     println!("Mode        deterministic safety + refusal checks");
     println!("Invocations {}", report.invocations);
     println!();
-    println!("{:<38} {:>8}  {}", "Case", "Result", "Detail");
+    println!("{:<38} {:>8}  Detail", "Case", "Result");
     println!("{}", rule());
     for case in &report.cases {
         println!(
