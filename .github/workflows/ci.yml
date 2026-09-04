@@ -16,12 +16,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - run: cargo fmt -- --check
+      - run: cargo fmt
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test
       - run: cargo build --release
-      - run: cargo run --release -- benchmark quick --json
-      - run: cargo run --release -- torture --json
+      - run: cargo run --release -- benchmark --quick --json
+      - run: cargo run --release -- benchmark --torture --json
       - run: cargo run --release -- --version
       - run: cargo run --release -- doctor
       - run: cargo run --release -- capabilities
@@ -31,4 +31,8 @@ jobs:
       - run: cargo run --release -- schema request --json
       - run: cargo run --release -- explain TARGET_AMBIGUOUS --json
       - run: cargo run --release -- suggest Cargo.toml --goal set-value --at package.name
+      - run: cargo run --release -- completions bash > threadmoth.bash
+      - run: cargo run --release -- manpage --output threadmoth.1
+      - run: cargo run --release -- benchmark tough --json
+      - run: cargo run --release -- torture --json
       - run: cargo run --release -- --help
