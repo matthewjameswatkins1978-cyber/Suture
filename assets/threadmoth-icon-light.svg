@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 900" role="img" aria-labelledby="title desc">
+  <title id="title">Threadmoth icon, dark silhouette</title>
+  <desc id="desc">A single-colour geometric moth with a needle-like body and thread hook.</desc>
+  <g transform="translate(-54 -54) scale(1.12)" fill="#1D2028">
+    <path d="M401 374 84 189l90 200 66 31-36 12c29 31 59 47 81 43l116-37z"/>
+    <path d="M499 374 816 189l-90 200-66 31 36 12c-29 31-59 47-81 43l-116-37z"/>
+    <path d="M408 454 268 529c18 19 49 39 78 49l63-89z"/>
+    <path d="M492 454 632 529c-18 19-49 39-78 49l-63-89z"/>
+    <path d="M428 322c-10-26-28-43-64-63 2 21 16 37 42 54l14 9z"/>
+    <path d="M472 322c10-26 28-43 64-63-2 21-16 37-42 54l-14 9z"/>
+    <path d="M450 335c-22 0-38 17-36 39l27 259h18l27-259c2-22-14-39-36-39z"/>
+    <path d="M448 648v32c0 25 13 36 38 36 25 0 40-13 36-32-2-11-11-16-22-11-5 2-9 7-11 13 14-6 21 0 19 8-2 8-10 12-22 12-18 0-25-8-25-27v-31z"/>
+  </g>
+</svg>
