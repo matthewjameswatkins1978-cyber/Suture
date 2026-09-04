@@ -1,4 +1,5 @@
 use crate::pipeline::{execute_request, execute_transaction};
+use crate::presentation::{rule, truncate};
 use crate::protocol::{
     Cardinality, EffectBudget, OperationPayload, Outcome, Request, TransactionRequest,
     PROTOCOL_VERSION,
@@ -309,6 +310,35 @@ fn symlink_file(_target: &Path, _link: &Path) -> bool {
     false
 }
 
+fn print_human_report(report: &Report) {
+    println!("THREADMOTH TORTURE");
+    println!("{}", rule());
+    println!("Version     {}", env!("CARGO_PKG_VERSION"));
+    println!("Mode        deterministic safety + refusal checks");
+    println!("Invocations {}", report.invocations);
+    println!();
+    println!("{:<38} {:>8}  {}", "Case", "Result", "Detail");
+    println!("{}", rule());
+    for case in &report.cases {
+        println!(
+            "{:<38} {:>8}  {}",
+            truncate(&case.name, 38),
+            case.state,
+            truncate(&case.detail, 28),
+        );
+    }
+    println!("{}", rule());
+    println!(
+        "{}  {} passed · {} failed · {} skipped · FOOTGUN {}/{} safe",
+        report.state,
+        report.passed,
+        report.failed,
+        report.skipped,
+        report.footgun_safe,
+        report.footgun_total,
+    );
+}
+
 pub fn run(json: bool) -> i32 {
     let root = match TempRoot::new() {
         Ok(root) => root,
@@ -324,11 +354,6 @@ pub fn run(json: bool) -> i32 {
             return 3;
         }
     };
-    if !json {
-        println!("THREADMOTH TORTURE");
-        println!("state: SETTING_UP disposable workspace");
-        println!("state: RUNNING deterministic safety cases");
-    }
     let mut results = Vec::new();
     let mut invocations = 0;
     invocations += apply_case(&workspace, &root.0, &mut results);
@@ -451,8 +476,7 @@ pub fn run(json: bool) -> i32 {
     if json {
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else {
-        println!("state: CHECKING passed={passed} failed={failed} skipped={skipped}");
-        println!("state: {state} footgun={safe}/{total}");
+        print_human_report(&report);
     }
     i32::from(failed != 0 || safe != total)
 }
