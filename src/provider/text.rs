@@ -380,14 +380,14 @@ mod tests {
 
     #[test]
     fn test_replace_single_unique() {
-        let content = b"Hello world, welcome to Suture.";
+        let content = b"Hello world, welcome to Threadmoth.";
         let op = TextOperation::Replace {
             target: "world".to_string(),
             replacement: "universe".to_string(),
         };
         let edits = TextProvider::plan(content, &op, &Cardinality::ExactlyOne).unwrap();
         let modified = apply_byte_edits(content, &edits).unwrap();
-        assert_eq!(modified, b"Hello universe, welcome to Suture.");
+        assert_eq!(modified, b"Hello universe, welcome to Threadmoth.");
     }
 
     #[test]

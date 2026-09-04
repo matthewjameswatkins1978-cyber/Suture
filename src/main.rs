@@ -5,7 +5,7 @@ use std::{
     env, fs,
     io::{self, BufRead, Read},
 };
-use suture::{
+use threadmoth::{
     pipeline::execute_request,
     protocol::{
         Certificate, CommitGuarantee, EffectBudget, EffectUsage, FailureReason, Outcome,
@@ -15,18 +15,18 @@ use suture::{
     workspace::Workspace,
 };
 
-const SUTURE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const THREADMOTH_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn help() {
-    println!("suture {SUTURE_VERSION} (protocol {PROTOCOL_VERSION}) - deterministic mutation of existing workspace state\n\nSuture changes exactly the state a request authorizes, refuses ambiguity, and returns a certificate. It is not Git, a formatter, a shell, or an online service.\n\nCOMMANDS");
-    for (name, description) in suture::metadata::commands() {
+    println!("threadmoth {THREADMOTH_VERSION} (protocol {PROTOCOL_VERSION}) - deterministic mutation of existing workspace state\n\nThreadmoth changes exactly the state a request authorizes, refuses ambiguity, and returns a certificate. It is not Git, a formatter, a shell, or an online service.\n\nCOMMANDS");
+    for (name, description) in threadmoth::metadata::commands() {
         println!("  {name:<14} {description}");
     }
-    println!("\nOUTCOMES\n  APPLIED       verified candidate committed\n  NO_CHANGE     requested desired state already held\n  REFUSED       no bytes written; request or evidence was unsafe/ambiguous\n  FAILED        execution or verification failed; inspect recovery state\n\nSAFETY\n  Providers propose edits; Core validates identity, cardinality, preservation and budgets before writing.\n  Start with: suture capabilities, suture examples, suture schema, suture suggest PATH\n  Help for one command: suture help <command>\n  Search help: suture help --find <term>");
+    println!("\nOUTCOMES\n  APPLIED       verified candidate committed\n  NO_CHANGE     requested desired state already held\n  REFUSED       no bytes written; request or evidence was unsafe/ambiguous\n  FAILED        execution or verification failed; inspect recovery state\n\nSAFETY\n  Providers propose edits; Core validates identity, cardinality, preservation and budgets before writing.\n  Start with: threadmoth capabilities, threadmoth examples, threadmoth schema, threadmoth suggest PATH\n  Help for one command: threadmoth help <command>\n  Search help: threadmoth help --find <term>");
 }
 
 fn print_examples(topic: Option<&str>) {
-    let examples = suture::metadata::examples(topic);
+    let examples = threadmoth::metadata::examples(topic);
     if examples.is_empty() {
         eprintln!("no example topic matched");
         std::process::exit(1);
@@ -35,7 +35,7 @@ fn print_examples(topic: Option<&str>) {
 }
 
 fn print_explain(code: &str, json_output: bool) {
-    let Some(reason) = suture::metadata::reason(code) else {
+    let Some(reason) = threadmoth::metadata::reason(code) else {
         eprintln!("unknown reason code: {code}");
         std::process::exit(1);
     };
@@ -170,7 +170,7 @@ fn empty_transaction_certificate(reason: RefusalReason) -> TransactionCertificat
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.get(1).is_some_and(|x| x == "--version" || x == "-V") {
-        println!("suture {SUTURE_VERSION}");
+        println!("threadmoth {THREADMOTH_VERSION}");
         return;
     }
     if args.get(1).is_some_and(|x| x == "--help" || x == "-h") {
@@ -298,7 +298,7 @@ fn main() {
                     std::process::exit(3);
                 }
             };
-            let certificate = suture::pipeline::execute_transaction(&ws, &transaction, dry);
+            let certificate = threadmoth::pipeline::execute_transaction(&ws, &transaction, dry);
             println!("{}", serde_json::to_string_pretty(&certificate).unwrap());
             match certificate.outcome {
                 Outcome::Refused => std::process::exit(2),
@@ -317,7 +317,7 @@ fn main() {
             };
             println!(
                 "{}",
-                serde_json::to_string_pretty(&suture::recovery::recover_all(&ws)).unwrap()
+                serde_json::to_string_pretty(&threadmoth::recovery::recover_all(&ws)).unwrap()
             );
         }
         "capabilities" => {
@@ -326,12 +326,12 @@ fn main() {
                 .skip(2)
                 .find(|arg| !arg.starts_with('-'))
                 .map(String::as_str);
-            let mut output = suture::metadata::capability_view(selector);
+            let mut output = threadmoth::metadata::capability_view(selector);
             if let Some(path) = option_value(&args, "--for") {
                 let root = env::current_dir().unwrap_or_else(|_| ".".into());
                 let ws = Workspace::new(root).unwrap();
                 let bytes = ws.read_file(&path).ok();
-                output = suture::metadata::capabilities_for(&path, bytes.as_deref());
+                output = threadmoth::metadata::capabilities_for(&path, bytes.as_deref());
             }
             let rendered = if bool_flag(&args, "--json") && !bool_flag(&args, "--pretty") {
                 serde_json::to_string(&output).unwrap()
@@ -352,25 +352,28 @@ fn main() {
                         .cloned()
                 })
                 .unwrap_or_else(|| "standard".into());
-            let Some(profile) = suture::benchmark::Profile::parse(&profile) else {
+            let Some(profile) = threadmoth::benchmark::Profile::parse(&profile) else {
                 eprintln!(
                     "unknown benchmark profile: {profile} (expected quick, standard, or tough)"
                 );
                 std::process::exit(1);
             };
-            std::process::exit(suture::benchmark::run(profile, bool_flag(&args, "--json")));
+            std::process::exit(threadmoth::benchmark::run(
+                profile,
+                bool_flag(&args, "--json"),
+            ));
         }
         "torture" => {
-            std::process::exit(suture::torture::run(bool_flag(&args, "--json")));
+            std::process::exit(threadmoth::torture::run(bool_flag(&args, "--json")));
         }
         "help" => {
             if let Some(term) = option_value(&args, "--find") {
-                for (name, description) in suture::metadata::find_help(&term) {
+                for (name, description) in threadmoth::metadata::find_help(&term) {
                     println!("{name}: {description}");
                 }
             } else if let Some(command) = args.get(2) {
-                match suture::metadata::command_help(command) {
-                    Some(text) => println!("suture help {command}\n\n{text}"),
+                match threadmoth::metadata::command_help(command) {
+                    Some(text) => println!("threadmoth help {command}\n\n{text}"),
                     None => {
                         eprintln!("unknown command: {command}");
                         std::process::exit(1);
@@ -414,8 +417,10 @@ fn main() {
                     });
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&suture::metadata::refusal_recovery(&certificate))
-                        .unwrap()
+                    serde_json::to_string_pretty(&threadmoth::metadata::refusal_recovery(
+                        &certificate
+                    ))
+                    .unwrap()
                 );
             } else {
                 let Some(path) = args.get(2) else {
@@ -427,7 +432,7 @@ fn main() {
                 let root = env::current_dir().unwrap_or_else(|_| ".".into());
                 let ws = Workspace::new(root).unwrap();
                 let bytes = ws.read_file(path).ok();
-                let suggestion = suture::metadata::suggest(
+                let suggestion = threadmoth::metadata::suggest(
                     path,
                     option_value(&args, "--goal").as_deref(),
                     option_value(&args, "--at").as_deref(),
@@ -459,7 +464,7 @@ fn main() {
                     } else {
                         "none"
                     };
-                    let out = serde_json::json!({"protocol_version": PROTOCOL_VERSION, "file_path": path, "bytes": bytes.len(), "sha256": suture::engine::compute_sha256(&bytes), "encoding": if bytes.starts_with(&[0xef,0xbb,0xbf]) { "utf8_bom" } else { "utf8" }, "newline_profile": newline, "final_newline": bytes.ends_with(b"\n")});
+                    let out = serde_json::json!({"protocol_version": PROTOCOL_VERSION, "file_path": path, "bytes": bytes.len(), "sha256": threadmoth::engine::compute_sha256(&bytes), "encoding": if bytes.starts_with(&[0xef,0xbb,0xbf]) { "utf8_bom" } else { "utf8" }, "newline_profile": newline, "final_newline": bytes.ends_with(b"\n")});
                     println!("{}", serde_json::to_string_pretty(&out).unwrap());
                 }
                 Err(e) => {
@@ -474,7 +479,7 @@ fn main() {
                 .skip(2)
                 .find(|arg| !arg.starts_with('-'))
                 .map(String::as_str);
-            let out = suture::metadata::schema(scope);
+            let out = threadmoth::metadata::schema(scope);
             if bool_flag(&args, "--json") && !bool_flag(&args, "--pretty") {
                 println!("{}", serde_json::to_string(&out).unwrap());
             } else {
@@ -483,12 +488,12 @@ fn main() {
         }
         "doctor" => {
             let root = env::current_dir().unwrap_or_else(|_| ".".into());
-            let providers = suture::metadata::provider_metadata()
+            let providers = threadmoth::metadata::provider_metadata()
                 .into_iter()
                 .map(|provider| provider.name)
                 .collect::<Vec<_>>()
                 .join(" ");
-            println!("suture doctor\nversion: {SUTURE_VERSION}\nos: {}\narch: {}\nworkspace: {}\nprotocol: {}\nproviders: {}\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available",env::consts::OS,env::consts::ARCH,match Workspace::new(root){Ok(_)=>"ready",Err(_)=>"unavailable"}, PROTOCOL_VERSION, providers);
+            println!("threadmoth doctor\nversion: {THREADMOTH_VERSION}\nos: {}\narch: {}\nworkspace: {}\nprotocol: {}\nproviders: {}\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available",env::consts::OS,env::consts::ARCH,match Workspace::new(root){Ok(_)=>"ready",Err(_)=>"unavailable"}, PROTOCOL_VERSION, providers);
         }
         _ => {
             eprintln!("unknown command: {command}");
@@ -546,34 +551,37 @@ fn run_mcp() {
             .unwrap_or(serde_json::Value::Null);
         let result = match request.get("method").and_then(|x| x.as_str()).unwrap_or("") {
             "initialize" => {
-                serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "suture", "version": SUTURE_VERSION, "protocol_version": PROTOCOL_VERSION}})
+                serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "threadmoth", "version": THREADMOTH_VERSION, "protocol_version": PROTOCOL_VERSION}})
             }
             "tools/list" => serde_json::json!({"tools": [
-                {"name": "suture_mutate", "description": "Apply one typed Suture mutation and return its certificate", "inputSchema": schema_for!(Request)},
-                {"name": "suture_capabilities", "description": "Return Suture capabilities", "inputSchema": {"type": "object"}},
-                {"name": "suture_transact", "description": "Prepare and commit a guarded transaction", "inputSchema": schema_for!(TransactionRequest)}
+                {"name": "threadmoth_mutate", "description": "Apply one typed Threadmoth mutation and return its certificate", "inputSchema": schema_for!(Request)},
+                {"name": "threadmoth_capabilities", "description": "Return Threadmoth capabilities", "inputSchema": {"type": "object"}},
+                {"name": "threadmoth_transact", "description": "Prepare and commit a guarded transaction", "inputSchema": schema_for!(TransactionRequest)}
             ]}),
             "tools/call" => {
                 let params = request.get("params").cloned().unwrap_or_default();
                 let name = params.get("name").and_then(|x| x.as_str()).unwrap_or("");
                 let arguments = params.get("arguments").cloned().unwrap_or_default();
                 let value = match name {
-                    "suture_capabilities" => {
-                        Ok(serde_json::to_value(suture::capabilities::current()).unwrap())
+                    "threadmoth_capabilities" | "suture_capabilities" => {
+                        Ok(serde_json::to_value(threadmoth::capabilities::current()).unwrap())
                     }
-                    "suture_mutate" => serde_json::from_value::<Request>(arguments).map(|r| {
-                        serde_json::to_value(execute_request(&workspace, &r, false)).unwrap()
-                    }),
-                    "suture_transact" => serde_json::from_value::<TransactionRequest>(arguments)
-                        .map(|r| {
-                            serde_json::to_value(suture::pipeline::execute_transaction(
+                    "threadmoth_mutate" | "suture_mutate" => {
+                        serde_json::from_value::<Request>(arguments).map(|r| {
+                            serde_json::to_value(execute_request(&workspace, &r, false)).unwrap()
+                        })
+                    }
+                    "threadmoth_transact" | "suture_transact" => {
+                        serde_json::from_value::<TransactionRequest>(arguments).map(|r| {
+                            serde_json::to_value(threadmoth::pipeline::execute_transaction(
                                 &workspace, &r, false,
                             ))
                             .unwrap()
-                        }),
+                        })
+                    }
                     _ => Err(serde_json::Error::io(io::Error::new(
                         io::ErrorKind::NotFound,
-                        "unknown Suture tool",
+                        "unknown Threadmoth tool",
                     ))),
                 };
                 match value {

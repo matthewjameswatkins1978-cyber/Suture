@@ -1,13 +1,13 @@
+use tempfile::TempDir;
 #[cfg(target_os = "windows")]
-use suture::engine::compute_sha256;
-use suture::pipeline::{execute_request, execute_transaction};
-use suture::protocol::{
+use threadmoth::engine::compute_sha256;
+use threadmoth::pipeline::{execute_request, execute_transaction};
+use threadmoth::protocol::{
     Cardinality, EffectBudget, OperationPayload, Outcome, Request, TransactionRequest,
     PROTOCOL_VERSION,
 };
-use suture::provider::text::TextOperation;
-use suture::workspace::Workspace;
-use tempfile::TempDir;
+use threadmoth::provider::text::TextOperation;
+use threadmoth::workspace::Workspace;
 
 fn request(path: &str, operation: OperationPayload) -> Request {
     Request {
@@ -58,7 +58,7 @@ fn successful_transaction_leaves_no_recovery_directory() {
     assert_eq!(certificate.outcome, Outcome::Applied);
     assert_eq!(workspace.read_file("a.txt").unwrap(), b"new-a\n");
     assert_eq!(workspace.read_file("b.txt").unwrap(), b"new-b\n");
-    assert!(!temp.path().join(".suture-recovery").exists());
+    assert!(!temp.path().join(".threadmoth-recovery").exists());
 }
 
 #[test]

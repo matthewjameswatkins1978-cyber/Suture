@@ -1,17 +1,17 @@
-# Suture 1.0 acceptance boundary
+# Threadmoth 1.0 acceptance boundary
 
 The 1.0 mutation runtime is extended by the 1.1 self-teaching discovery
-surface. `suture help`, `examples`, `schema`, `explain`, `capabilities`, and
+surface. `threadmoth help`, `examples`, `schema`, `explain`, `capabilities`, and
 `suggest` are generated from the canonical runtime metadata registry.
 
-Suture 1.0 keeps one mutation authority: providers propose byte edits and Core alone validates, budgets, commits, verifies, and certifies them.
+Threadmoth 1.0 keeps one mutation authority: providers propose byte edits and Core alone validates, budgets, commits, verifies, and certifies them.
 
 The v1.0 release protocol was `1.0.0`; the current self-teaching protocol is
-`1.1.0`. The normal one-file surface is `suture mutate` (or `suture preview`);
-`suture capabilities` describes the exact runtime surface. `suture transact`
+`1.1.0`. The normal one-file surface is `threadmoth mutate` (or `threadmoth preview`);
+`threadmoth capabilities` describes the exact runtime surface. `threadmoth transact`
 prepares all content candidates before writing, journals them before commit,
 and reports `transactional_with_rollback` when rollback is available.
-`suture recover` never silently ignores an interrupted journal.
+`threadmoth recover` never silently ignores an interrupted journal.
 
 Built-in providers are explicit and never fall back to one another:
 
@@ -28,4 +28,4 @@ Built-in providers are explicit and never fall back to one another:
 
 The certificate includes request identity, provider identity, pre/post hashes, changed byte and line ranges, bounded diff, structural validation, newline/BOM facts, effect-budget usage, commit guarantee, and recovery state. Generated-file markers, binary input, unknown encodings, stale identities, duplicate targets, path escape, and unsupported preservation are fail-closed refusals.
 
-Git, builds, tests, formatters, linters, package managers, arbitrary subprocesses, network access, LSP semantics, and general workflow control remain outside Suture.
+Git, builds, tests, formatters, linters, package managers, arbitrary subprocesses, network access, LSP semantics, and general workflow control remain outside Threadmoth.

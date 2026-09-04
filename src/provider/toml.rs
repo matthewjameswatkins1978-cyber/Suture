@@ -626,7 +626,7 @@ mod tests {
         let content = br#"
 # Project configuration
 [package]
-name = "suture" # package name
+name = "threadmoth" # package name
 version = "0.1.0"
 "#;
         let op = TomlOperation::Set {
@@ -647,7 +647,7 @@ version = "0.1.0"
     fn test_toml_insert_operation() {
         let content = br#"
 [package]
-name = "suture"
+name = "threadmoth"
 "#;
         let op = TomlOperation::Insert {
             path: "package".to_string(),
@@ -658,14 +658,14 @@ name = "suture"
         let modified = apply_byte_edits(content, &edits).unwrap();
         let mod_str = std::str::from_utf8(&modified).unwrap();
         assert!(mod_str.contains("version = \"0.1.0\""));
-        assert!(mod_str.contains("name = \"suture\""));
+        assert!(mod_str.contains("name = \"threadmoth\""));
     }
 
     #[test]
     fn test_toml_delete_operation() {
         let content = br#"
 [package]
-name = "suture"
+name = "threadmoth"
 remove_me = "bye"
 "#;
         let op = TomlOperation::Delete {
@@ -675,14 +675,14 @@ remove_me = "bye"
         let modified = apply_byte_edits(content, &edits).unwrap();
         let mod_str = std::str::from_utf8(&modified).unwrap();
         assert!(!mod_str.contains("remove_me"));
-        assert!(mod_str.contains("name = \"suture\""));
+        assert!(mod_str.contains("name = \"threadmoth\""));
     }
 
     #[test]
     fn test_toml_rename_key_operation() {
         let content = br#"
 [package]
-old_name = "suture"
+old_name = "threadmoth"
 "#;
         let op = TomlOperation::RenameKey {
             path: "package.old_name".to_string(),
@@ -691,7 +691,7 @@ old_name = "suture"
         let edits = TomlProvider::plan(content, &op, &Cardinality::ExactlyOne).unwrap();
         let modified = apply_byte_edits(content, &edits).unwrap();
         let mod_str = std::str::from_utf8(&modified).unwrap();
-        assert!(mod_str.contains("name = \"suture\""));
+        assert!(mod_str.contains("name = \"threadmoth\""));
         assert!(!mod_str.contains("old_name"));
     }
 
@@ -715,7 +715,7 @@ old_name = "suture"
     fn test_toml_missing_target_refusal() {
         let content = br#"
 [package]
-name = "suture"
+name = "threadmoth"
 "#;
         let op = TomlOperation::Set {
             path: "package.nonexistent".to_string(),

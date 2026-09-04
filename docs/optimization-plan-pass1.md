@@ -20,6 +20,6 @@ Planned changes:
 - add regression coverage for empty replacement handling in text `set`/`rename` paths;
 - preserve all safety, cardinality, refusal, transaction, and certificate semantics;
 - run `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, the full test suite, and the frozen torture suite before merge;
-- perform the broad Suture -> Threadmoth crate/binary/docs/release rename as a controlled mechanical pass, not mixed into semantics-sensitive refactors.
+- complete the broad Suture -> Threadmoth crate/binary/docs/release rename as a controlled mechanical pass after the semantics-sensitive refactors.
 
-The branch is intentionally isolated from `main` until those checks pass.
+The performance and stress-hardening work is complete; the final merge gate is the current release-candidate build, tests, benchmark, torture suite, and hosted CI.

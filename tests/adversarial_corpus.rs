@@ -1,11 +1,11 @@
 use std::fs;
-use suture::pipeline::execute_request;
-use suture::protocol::{Cardinality, OperationPayload, Outcome, RefusalReason, Request};
-use suture::provider::json::JsonOperation;
-use suture::provider::text::TextOperation;
-use suture::provider::toml::{TomlOperation, TomlValueWrapper};
-use suture::workspace::Workspace;
 use tempfile::TempDir;
+use threadmoth::pipeline::execute_request;
+use threadmoth::protocol::{Cardinality, OperationPayload, Outcome, RefusalReason, Request};
+use threadmoth::provider::json::JsonOperation;
+use threadmoth::provider::text::TextOperation;
+use threadmoth::provider::toml::{TomlOperation, TomlValueWrapper};
+use threadmoth::workspace::Workspace;
 
 #[test]
 fn test_adversarial_corpus_all_38() {
@@ -22,9 +22,9 @@ fn test_adversarial_corpus_all_38() {
     };
 
     // 1. Unique exact literal target
-    write_file("file1.txt", b"Hello Suture world!\n");
+    write_file("file1.txt", b"Hello Threadmoth world!\n");
     let req = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file1.txt".to_string(),
@@ -34,7 +34,7 @@ fn test_adversarial_corpus_all_38() {
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
-            target: "Suture".to_string(),
+            target: "Threadmoth".to_string(),
             replacement: "Deterministic".to_string(),
         }),
     };
@@ -44,7 +44,7 @@ fn test_adversarial_corpus_all_38() {
     // 2. Duplicate exact target
     write_file("file2.txt", b"foo and foo\n");
     let req = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file2.txt".to_string(),
@@ -68,7 +68,7 @@ fn test_adversarial_corpus_all_38() {
     // 3. Zero target
     write_file("file3.txt", b"hello world\n");
     let req = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file3.txt".to_string(),
@@ -94,7 +94,7 @@ fn test_adversarial_corpus_all_38() {
     // Here we test that duplicate target is caught.
     write_file("file4.txt", b"block A\nblock A\n");
     let req = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file4.txt".to_string(),
@@ -118,7 +118,7 @@ fn test_adversarial_corpus_all_38() {
     // 5. Stale whole-file identity
     write_file("file5.txt", b"original content\n");
     let req = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file5.txt".to_string(),
@@ -142,7 +142,7 @@ fn test_adversarial_corpus_all_38() {
     // 6. Multiple sequential operations
     write_file("file6.txt", b"step one\n");
     let req1 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file6.txt".to_string(),
@@ -161,7 +161,7 @@ fn test_adversarial_corpus_all_38() {
     let post_hash = cert1.post_hash.clone();
 
     let req2 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file6.txt".to_string(),
@@ -181,7 +181,7 @@ fn test_adversarial_corpus_all_38() {
     // 7. Retry after successful operation (idempotence / no_change)
     // Re-applying step three replacement when content is already "step three\n"
     let req3 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file6.txt".to_string(),
@@ -201,7 +201,7 @@ fn test_adversarial_corpus_all_38() {
     // 8. CRLF file
     write_file("file8.txt", b"line1\r\nline2\r\n");
     let req8 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file8.txt".to_string(),
@@ -223,7 +223,7 @@ fn test_adversarial_corpus_all_38() {
     // 9. LF file
     write_file("file9.txt", b"line1\nline2\n");
     let req9 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file9.txt".to_string(),
@@ -247,7 +247,7 @@ fn test_adversarial_corpus_all_38() {
     bom_content.extend_from_slice(b"hello bom\n");
     write_file("file10.txt", &bom_content);
     let req10 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file10.txt".to_string(),
@@ -269,7 +269,7 @@ fn test_adversarial_corpus_all_38() {
     // 11. Final newline present
     write_file("file11.txt", b"content\n");
     let req11 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file11.txt".to_string(),
@@ -290,7 +290,7 @@ fn test_adversarial_corpus_all_38() {
     // 12. Final newline absent
     write_file("file12.txt", b"content");
     let req12 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file12.txt".to_string(),
@@ -311,7 +311,7 @@ fn test_adversarial_corpus_all_38() {
     // 13. TAB vs spaces
     write_file("file13.txt", b"\tindented\n");
     let req13 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file13.txt".to_string(),
@@ -335,7 +335,7 @@ fn test_adversarial_corpus_all_38() {
     // 14. NBSP vs normal space
     write_file("file14.txt", "hello\u{00A0}world\n".as_bytes());
     let req14 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file14.txt".to_string(),
@@ -355,7 +355,7 @@ fn test_adversarial_corpus_all_38() {
     // 15. Zero-width character (U+200B)
     write_file("file15.txt", "hello\u{200B}world\n".as_bytes());
     let req15 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file15.txt".to_string(),
@@ -378,7 +378,7 @@ fn test_adversarial_corpus_all_38() {
         "const msg = \u{201C}hello\u{201D};\n".as_bytes(),
     );
     let req16 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file16.txt".to_string(),
@@ -398,7 +398,7 @@ fn test_adversarial_corpus_all_38() {
     // 17. Unicode normalization edge
     write_file("file17.txt", "café\n".as_bytes()); // e + combining accent or precomposed
     let req17 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file17.txt".to_string(),
@@ -419,7 +419,7 @@ fn test_adversarial_corpus_all_38() {
     // 18. Ugly but valid JSON formatting
     write_file("file18.json", b"{\"a\":1,\n \"b\":2}  \n");
     let req18 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file18.json".to_string(),
@@ -439,7 +439,7 @@ fn test_adversarial_corpus_all_38() {
     // 19. Minified JSON
     write_file("file19.json", b"{\"x\":1,\"y\":2}");
     let req19 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file19.json".to_string(),
@@ -459,7 +459,7 @@ fn test_adversarial_corpus_all_38() {
     // 20. JSON scalar set
     write_file("file20.json", b"{\"scalar\": 42}\n");
     let req20 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file20.json".to_string(),
@@ -479,7 +479,7 @@ fn test_adversarial_corpus_all_38() {
     // 21. JSON array insert/delete
     write_file("file21.json", b"{\"arr\": [1, 2]}\n");
     let req21 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file21.json".to_string(),
@@ -500,7 +500,7 @@ fn test_adversarial_corpus_all_38() {
     // 22. Malformed JSON
     write_file("file22.json", b"{\"unclosed\": true\n");
     let req22 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file22.json".to_string(),
@@ -527,7 +527,7 @@ fn test_adversarial_corpus_all_38() {
         b"# Important comment\n[owner]\nname = \"Tom\"\n",
     );
     let req23 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file23.toml".to_string(),
@@ -549,7 +549,7 @@ fn test_adversarial_corpus_all_38() {
     // 24. TOML unusual spacing
     write_file("file24.toml", b"   [package]   \n  name   =   \"foo\"   \n");
     let req24 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file24.toml".to_string(),
@@ -569,7 +569,7 @@ fn test_adversarial_corpus_all_38() {
     // 25. TOML ordering
     write_file("file25.toml", b"z = 1\na = 2\n");
     let req25 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file25.toml".to_string(),
@@ -594,7 +594,7 @@ fn test_adversarial_corpus_all_38() {
     // 26. TOML set/delete
     write_file("file26.toml", b"[table]\nkey = \"val\"\n");
     let req26 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file26.toml".to_string(),
@@ -613,7 +613,7 @@ fn test_adversarial_corpus_all_38() {
     // 27. Malformed TOML
     write_file("file27.toml", b"key = [unclosed\n");
     let req27 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file27.toml".to_string(),
@@ -637,7 +637,7 @@ fn test_adversarial_corpus_all_38() {
     // 28. Path traversal refusal
     write_file("file28.txt", b"safe\n");
     let req28 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "../outside.txt".to_string(),
@@ -669,7 +669,7 @@ fn test_adversarial_corpus_all_38() {
         std::os::unix::fs::symlink(&outside_file, &_symlink_path).unwrap();
     }
     let req29 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "symlink_escape.txt".to_string(),
@@ -690,7 +690,7 @@ fn test_adversarial_corpus_all_38() {
     // 30. Concurrent / unrelated modification refusal (stale pre-state hash check)
     write_file("file30.txt", b"version 1\n");
     let req30_identify = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file30.txt".to_string(),
@@ -721,7 +721,7 @@ fn test_adversarial_corpus_all_38() {
     large_content.extend_from_slice(b"FINDME\n");
     write_file("file31.txt", &large_content);
     let req31 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file31.txt".to_string(),
@@ -742,13 +742,13 @@ fn test_adversarial_corpus_all_38() {
     write_file("file32.txt", b"target alpha\n");
     // Get pre hash of target alpha
     let content32 = workspace.read_file("file32.txt").unwrap();
-    let hash32 = suture::engine::compute_sha256(&content32);
+    let hash32 = threadmoth::engine::compute_sha256(&content32);
 
     // Mutate file behind scenes
     write_file("file32.txt", b"target beta\n");
 
     let req32 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file32.txt".to_string(),
@@ -773,7 +773,7 @@ fn test_adversarial_corpus_all_38() {
     let utf16_bytes = vec![0xFF, 0xFE, b'h', 0, b'i', 0];
     write_file("file33.txt", &utf16_bytes);
     let req33 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file33.txt".to_string(),
@@ -798,7 +798,7 @@ fn test_adversarial_corpus_all_38() {
     // (Tested via unknown operation or unhandled format)
 
     // 35. Lossy preservation refusal
-    // Suture Core preserves exact bytes for unedited regions.
+    // Threadmoth Core preserves exact bytes for unedited regions.
 
     // 36. Overlapping mutation plan
     // Handled by engine/text provider non-overlapping or sorted edits check.
@@ -806,7 +806,7 @@ fn test_adversarial_corpus_all_38() {
     // 37. Certificate bounded-output behaviour
     write_file("file37.txt", b"line1\nline2\nline3\n");
     let req37 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file37.txt".to_string(),
@@ -830,7 +830,7 @@ fn test_adversarial_corpus_all_38() {
         b"SECRET_API_KEY=super-secret-token-12345\n\n\n\n\npublic_field = \"hello\"\n",
     );
     let req38 = Request {
-        version: suture::protocol::PROTOCOL_VERSION.to_string(),
+        version: threadmoth::protocol::PROTOCOL_VERSION.to_string(),
         request_id: String::new(),
         allow_generated: false,
         file_path: "file38.txt".to_string(),

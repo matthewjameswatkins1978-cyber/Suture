@@ -1,11 +1,11 @@
-use suture::engine::compute_sha256;
-use suture::pipeline::execute_request;
-use suture::protocol::{
+use tempfile::TempDir;
+use threadmoth::engine::compute_sha256;
+use threadmoth::pipeline::execute_request;
+use threadmoth::protocol::{
     Cardinality, OperationPayload, Outcome, RefusalReason, Request, PROTOCOL_VERSION,
 };
-use suture::provider::json::JsonOperation;
-use suture::provider::text::TextOperation;
-use tempfile::TempDir;
+use threadmoth::provider::json::JsonOperation;
+use threadmoth::provider::text::TextOperation;
 
 fn request(path: &str, operation: OperationPayload) -> Request {
     Request {
@@ -28,7 +28,7 @@ fn json_edit_preserves_unrelated_bytes() {
     let original = b"{\n  \"target\" : 1,\n  \"secret-looking\" : \"do not echo\"\n}\n";
     std::fs::write(tmp.path().join("a.json"), original).unwrap();
     let cert = execute_request(
-        &suture::workspace::Workspace::new(tmp.path()).unwrap(),
+        &threadmoth::workspace::Workspace::new(tmp.path()).unwrap(),
         &request(
             "a.json",
             OperationPayload::Json(JsonOperation::Set {
@@ -52,7 +52,7 @@ fn json_edit_preserves_unrelated_bytes() {
 
 #[test]
 fn duplicate_diagnostics_are_bounded_and_actionable() {
-    let result = suture::provider::text::TextProvider::plan(
+    let result = threadmoth::provider::text::TextProvider::plan(
         b"x x x",
         &TextOperation::Replace {
             target: "x".into(),
@@ -61,7 +61,7 @@ fn duplicate_diagnostics_are_bounded_and_actionable() {
         &Cardinality::ExactlyOne,
     );
     match result {
-        Err(suture::provider::text::TextProviderError::Refused(
+        Err(threadmoth::provider::text::TextProviderError::Refused(
             RefusalReason::DuplicateTarget { candidates, .. },
         )) => {
             assert_eq!(candidates.len(), 3);
@@ -84,7 +84,7 @@ fn protocol_version_is_fail_closed() {
     );
     req.version = "9.9.9".into();
     let cert = execute_request(
-        &suture::workspace::Workspace::new(tmp.path()).unwrap(),
+        &threadmoth::workspace::Workspace::new(tmp.path()).unwrap(),
         &req,
         false,
     );

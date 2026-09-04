@@ -7,8 +7,8 @@ The primary falsification metric is **wrong mutation reported as successful**. T
 Run the standard benchmark and the safety suite:
 
 ```text
-suture benchmark
-suture torture
+threadmoth benchmark
+threadmoth torture
 ```
 
 The benchmark accepts `quick`, `standard` (the default), or `tough` profiles. Add `--json` for machine-readable output. The tough profile adds 5 MiB and 32 MiB files, a two-million-byte long-line case, a many-line case, and 250 repeated small-file checks. Every benchmark reports correctness before timing and exits non-zero if an expected successful mutation is wrong.
@@ -41,19 +41,19 @@ The pass-1 branch was rerun on 2026-09-04 with the same checked-in harness after
 
 The timings are a single Windows run and are not a before/after claim; the certificate sizes differ from the earlier run because the branch includes later protocol/runtime changes. The safety signal remains zero incorrect successful mutations.
 
-## Release tough-profile run
+## Threadmoth 1.2 tough-profile run
 
-The new release command was run on 2026-09-04 on this Windows x86_64 host at pass-1 commit `68a05da`:
+The release command was run on 2026-09-04 on this Windows x86_64 host against the Threadmoth 1.2 release candidate:
 
 | case | bytes | iterations | wrong applied | average |
 |---|---:|---:|---:|---:|
-| tiny | 21 | 100 | 0 | 389.8 us |
-| config_30k | 30,008 | 50 | 0 | 759.0 us |
-| text_1m | 1,000,008 | 25 | 0 | 8,090.9 us |
-| text_5m | 5,000,008 | 10 | 0 | 38,774.7 us |
-| text_32m | 32,000,008 | 3 | 0 | 247,907.3 us |
-| many_lines_2m | 1,999,992 | 10 | 0 | 28,223.8 us |
-| long_line_2m | 2,000,006 | 5 | 0 | 15,997.5 us |
-| small_files_250 | 2,500 total | 250 | 0 | 1,609.1 us |
+| tiny | 21 | 100 | 0 | 456.1 us |
+| config_30k | 30,008 | 50 | 0 | 835.7 us |
+| text_1m | 1,000,008 | 25 | 0 | 7,571.8 us |
+| text_5m | 5,000,008 | 10 | 0 | 37,258.2 us |
+| text_32m | 32,000,008 | 3 | 0 | 251,627.2 us |
+| many_lines_2m | 1,999,992 | 10 | 0 | 27,400.9 us |
+| long_line_2m | 2,000,006 | 5 | 0 | 16,046.4 us |
+| small_files_250 | 2,500 total | 250 | 0 | 2,580.8 us |
 
 These are local measurements, not universal performance claims. The important correctness result is zero wrong successful mutations across the tough profile.

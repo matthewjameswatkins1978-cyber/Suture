@@ -1,6 +1,6 @@
 fn main() {
-    std::process::exit(suture::benchmark::run(
-        suture::benchmark::Profile::Standard,
+    std::process::exit(threadmoth::benchmark::run(
+        threadmoth::benchmark::Profile::Standard,
         false,
     ));
 }

@@ -2130,7 +2130,10 @@ fn zero_effect() -> EffectUsage {
 
 fn request_id(r: &Request) -> String {
     if r.request_id.is_empty() {
-        format!("suture-{}", &compute_sha256(r.file_path.as_bytes())[..16])
+        format!(
+            "threadmoth-{}",
+            &compute_sha256(r.file_path.as_bytes())[..16]
+        )
     } else {
         r.request_id.clone()
     }

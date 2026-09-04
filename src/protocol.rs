@@ -101,7 +101,7 @@ pub struct TransactionCertificate {
 }
 
 /// A hard upper bound on the mutation's prepared effect. `None` means that
-/// particular dimension is unbounded; Suture still applies its own safety
+/// particular dimension is unbounded; Threadmoth still applies its own safety
 /// limits for pathological requests.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
@@ -215,7 +215,7 @@ pub enum RefusalReason {
 }
 
 impl RefusalReason {
-    /// Stable machine identifier used by certificates and `suture explain`.
+    /// Stable machine identifier used by certificates and `threadmoth explain`.
     pub fn code(&self) -> &'static str {
         match self {
             Self::CardinalityMismatch { .. } => "CARDINALITY_MISMATCH",

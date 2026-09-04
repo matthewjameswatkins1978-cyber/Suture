@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! The public knowledge base for Suture.  CLI discovery surfaces are views of
+//! The public knowledge base for Threadmoth.  CLI discovery surfaces are views of
 //! this module; they must not grow separate hand-written descriptions of the
 //! protocol.
 
@@ -83,7 +83,7 @@ pub struct CapabilityManifest {
     pub format_version: &'static str,
     pub protocol_versions: Vec<&'static str>,
     pub protocol_version: &'static str,
-    pub suture_version: &'static str,
+    pub threadmoth_version: &'static str,
     pub capability_set_id: String,
     pub providers: Vec<ProviderMetadata>,
     pub operations: Vec<OperationMetadata>,
@@ -574,7 +574,7 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     reason!(
         "CARDINALITY_MISMATCH",
         "The observed match count did not equal the requested count.",
-        "Suture will not choose an unintended target.",
+        "Threadmoth will not choose an unintended target.",
         "narrow_target",
         false,
         ["inspect", "suggest", "preview"]
@@ -614,7 +614,7 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     reason!(
         "RESOURCE_LIMIT_EXCEEDED",
         "The request or observed file exceeds a built-in safety limit.",
-        "Suture bounds parser and memory exposure before mutation.",
+        "Threadmoth bounds parser and memory exposure before mutation.",
         "reduce_input_or_split_work",
         false,
         ["capabilities", "inspect"]
@@ -622,7 +622,7 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     reason!(
         "WORKSPACE_ESCAPE",
         "The path or scope leaves the workspace.",
-        "Suture only mutates confined workspace state.",
+        "Threadmoth only mutates confined workspace state.",
         "correct_path",
         false,
         ["inspect", "suggest"]
@@ -638,7 +638,7 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     reason!(
         "PROVIDER_UNSUPPORTED",
         "No advertised provider capability supports the request.",
-        "Suture never silently falls back to another provider.",
+        "Threadmoth never silently falls back to another provider.",
         "choose_supported_provider",
         false,
         ["capabilities", "suggest"]
@@ -646,7 +646,7 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     reason!(
         "PRESERVATION_UNAVAILABLE",
         "The requested source-preservation guarantee cannot be proved.",
-        "Suture refuses lossy rewriting.",
+        "Threadmoth refuses lossy rewriting.",
         "choose_guarantee",
         false,
         ["capabilities", "suggest"]
@@ -662,7 +662,7 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     reason!(
         "ENCODING_UNSUPPORTED",
         "The file encoding is not safely supported.",
-        "Suture never guesses a legacy encoding.",
+        "Threadmoth never guesses a legacy encoding.",
         "convert_explicitly",
         false,
         ["inspect"]
@@ -710,7 +710,7 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     reason!(
         "LOSSY_OPERATION_REQUIRES_OPT_IN",
         "The operation could change source details that were not authorized.",
-        "Suture does not silently accept lossy rewriting.",
+        "Threadmoth does not silently accept lossy rewriting.",
         "choose_guarantee",
         false,
         ["capabilities", "suggest"]
@@ -726,7 +726,7 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     reason!(
         "PROTOCOL_UNSUPPORTED",
         "The request protocol version is not supported by this binary.",
-        "Suture will not reinterpret a different contract.",
+        "Threadmoth will not reinterpret a different contract.",
         "upgrade_or_use_matching_binary",
         false,
         ["capabilities", "schema"]
@@ -742,7 +742,7 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     reason!(
         "BINARY_INPUT",
         "The target contains binary data and is outside content-mutation scope.",
-        "Suture does not guess how binary bytes should be edited.",
+        "Threadmoth does not guess how binary bytes should be edited.",
         "choose_text_target",
         false,
         ["inspect"]
@@ -750,7 +750,7 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     reason!(
         "PATH_UNMAPPABLE",
         "The declared path namespace cannot be mapped to this execution environment.",
-        "Suture will not guess a drive, mount, or distribution mapping.",
+        "Threadmoth will not guess a drive, mount, or distribution mapping.",
         "correct_path_namespace",
         false,
         ["capabilities", "inspect"]
@@ -781,8 +781,8 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     );
     reason!(
         "INTERNAL_INVARIANT",
-        "An internal Suture invariant failed while preparing a candidate.",
-        "Suture fails closed rather than committing an unverified result.",
+        "An internal Threadmoth invariant failed while preparing a candidate.",
+        "Threadmoth fails closed rather than committing an unverified result.",
         "report_defect",
         false,
         ["inspect", "recover"]
@@ -806,7 +806,7 @@ pub fn capabilities() -> CapabilityManifest {
         "format_version": "1.1",
         "protocol_versions": [PROTOCOL_VERSION],
         "protocol_version": PROTOCOL_VERSION,
-        "suture_version": env!("CARGO_PKG_VERSION"),
+        "threadmoth_version": env!("CARGO_PKG_VERSION"),
         "providers": providers,
         "operations": operations,
         "selectors": ["literal", "json_pointer", "dotted_key", "top_level_scalar_key", "heading", "bounded_pattern", "syntax_node_text", "syntax_node_kind", "workspace_relative_path"],
@@ -825,7 +825,7 @@ pub fn capabilities() -> CapabilityManifest {
         format_version: "1.1",
         protocol_versions: vec![PROTOCOL_VERSION],
         protocol_version: PROTOCOL_VERSION,
-        suture_version: env!("CARGO_PKG_VERSION"),
+        threadmoth_version: env!("CARGO_PKG_VERSION"),
         capability_set_id,
         providers: provider_metadata(),
         operations: operation_metadata(),
@@ -977,7 +977,7 @@ fn digest_without_id(value: &Value) -> String {
 pub fn schema(scope: Option<&str>) -> Value {
     let mut document = json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "Suture 1.1 Protocol Schemas",
+            "title": "Threadmoth 1.2 Protocol Schemas",
         "protocol_version": PROTOCOL_VERSION,
         "scope": scope.unwrap_or("all"),
         "request": schema_for!(Request),
@@ -1039,7 +1039,7 @@ pub fn examples(topic: Option<&str>) -> Vec<Example> {
                 "Cargo.toml",
                 TomlOperation::Set {
                     path: "package.name".into(),
-                    value: TomlValueWrapper::String("suture".into()),
+                    value: TomlValueWrapper::String("threadmoth".into()),
                 },
             ),
             "APPLIED",
@@ -1137,7 +1137,7 @@ pub fn examples(topic: Option<&str>) -> Vec<Example> {
                 },
             ),
             "REFUSED / TARGET_AMBIGUOUS",
-            "Suture returns candidates instead of choosing one.",
+            "Threadmoth returns candidates instead of choosing one.",
         ),
         example(
             "refusal-recovery",
@@ -1433,7 +1433,7 @@ pub fn suggest(
         );
     }
     if !candidates.is_empty() {
-        alternatives.extend(candidates.iter().map(|provider| json!({"provider": provider, "path": path, "next": format!("suture suggest {path} --goal {goal_name}")})));
+        alternatives.extend(candidates.iter().map(|provider| json!({"provider": provider, "path": path, "next": format!("threadmoth suggest {path} --goal {goal_name}")})));
     }
     Suggestion {
         provider: detected.clone(),

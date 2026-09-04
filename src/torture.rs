@@ -407,7 +407,7 @@ pub fn run(json: bool) -> i32 {
     };
     let transaction_certificate = execute_transaction(&workspace, &transaction, false);
     let transaction_pass = transaction_certificate.outcome == Outcome::Applied
-        && !root.0.join(".suture-recovery").exists();
+        && !root.0.join(".threadmoth-recovery").exists();
     add(
         &mut results,
         "successful transaction cleanup",
@@ -415,7 +415,7 @@ pub fn run(json: bool) -> i32 {
         format!(
             "outcome={:?} recovery_dir_present={}",
             transaction_certificate.outcome,
-            root.0.join(".suture-recovery").exists()
+            root.0.join(".threadmoth-recovery").exists()
         ),
     );
     invocations += 1;

@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 
+const RECOVERY_DIR: &str = ".threadmoth-recovery";
+const LEGACY_RECOVERY_DIR: &str = ".suture-recovery";
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Journal {
     pub protocol_version: String,
@@ -23,7 +26,7 @@ pub struct JournalEntry {
 }
 
 pub fn write_journal(workspace: &Workspace, journal: &Journal) -> Result<(), WorkspaceError> {
-    let dir = workspace.root().join(".suture-recovery");
+    let dir = workspace.root().join(RECOVERY_DIR);
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.json", safe_id(&journal.transaction_id)));
     let bytes = serde_json::to_vec_pretty(journal)
@@ -38,15 +41,25 @@ pub fn write_journal(workspace: &Workspace, journal: &Journal) -> Result<(), Wor
 }
 
 pub fn remove_journal(workspace: &Workspace, transaction_id: &str) -> Result<(), WorkspaceError> {
-    let dir = workspace.root().join(".suture-recovery");
-    let path = dir.join(format!("{}.json", safe_id(transaction_id)));
-    match fs::remove_file(path) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e.into()),
+    let filename = format!("{}.json", safe_id(transaction_id));
+    for dir in recovery_dirs(workspace) {
+        match fs::remove_file(dir.join(&filename)) {
+            Ok(()) => break,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
     }
-    remove_recovery_dir_if_empty(&dir);
+    for dir in recovery_dirs(workspace) {
+        remove_recovery_dir_if_empty(&dir);
+    }
     Ok(())
+}
+
+fn recovery_dirs(workspace: &Workspace) -> [std::path::PathBuf; 2] {
+    [
+        workspace.root().join(RECOVERY_DIR),
+        workspace.root().join(LEGACY_RECOVERY_DIR),
+    ]
 }
 
 fn remove_recovery_dir_if_empty(dir: &std::path::Path) {
@@ -64,7 +77,6 @@ enum EntryState {
 }
 
 pub fn recover_all(workspace: &Workspace) -> RecoveryReport {
-    let dir = workspace.root().join(".suture-recovery");
     let mut report = RecoveryReport {
         inspected: 0,
         completed: 0,
@@ -72,10 +84,17 @@ pub fn recover_all(workspace: &Workspace) -> RecoveryReport {
         cleaned: 0,
         manual: Vec::new(),
     };
-    let entries = match fs::read_dir(&dir) {
+    for dir in recovery_dirs(workspace) {
+        recover_dir(workspace, &dir, &mut report);
+    }
+    report
+}
+
+fn recover_dir(workspace: &Workspace, dir: &std::path::Path, report: &mut RecoveryReport) {
+    let entries = match fs::read_dir(dir) {
         Ok(x) => x,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return report,
-        Err(_) => return report,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return,
+        Err(_) => return,
     };
     for item in entries.flatten() {
         if item.path().extension().and_then(|x| x.to_str()) != Some("json") {
@@ -147,8 +166,7 @@ pub fn recover_all(workspace: &Workspace) -> RecoveryReport {
             report.cleaned += 1;
         }
     }
-    remove_recovery_dir_if_empty(&dir);
-    report
+    remove_recovery_dir_if_empty(dir);
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -216,7 +234,7 @@ mod tests {
         assert_eq!(report.completed, 1);
         assert_eq!(report.restored, 0);
         assert_eq!(workspace.read_file("x.txt").unwrap(), b"new");
-        assert!(!temp.path().join(".suture-recovery").exists());
+        assert!(!temp.path().join(".threadmoth-recovery").exists());
     }
 
     #[test]
@@ -240,7 +258,7 @@ mod tests {
         assert_eq!(report.restored, 1);
         assert_eq!(workspace.read_file("a.txt").unwrap(), b"old-a");
         assert_eq!(workspace.read_file("b.txt").unwrap(), b"old-b");
-        assert!(!temp.path().join(".suture-recovery").exists());
+        assert!(!temp.path().join(".threadmoth-recovery").exists());
     }
 
     #[test]
@@ -256,8 +274,11 @@ mod tests {
         assert_eq!(report.completed, 0);
         assert!(!report.manual.is_empty());
         assert_eq!(workspace.read_file("x.txt").unwrap(), b"unexpected");
-        assert!(temp.path().join(".suture-recovery/changed.json").exists());
-        assert!(temp.path().join(".suture-recovery").exists());
+        assert!(temp
+            .path()
+            .join(".threadmoth-recovery/changed.json")
+            .exists());
+        assert!(temp.path().join(".threadmoth-recovery").exists());
     }
 
     #[test]
@@ -269,7 +290,7 @@ mod tests {
 
         remove_journal(&workspace, "finished").unwrap();
 
-        assert!(!temp.path().join(".suture-recovery").exists());
+        assert!(!temp.path().join(".threadmoth-recovery").exists());
     }
 
     #[test]
@@ -283,7 +304,33 @@ mod tests {
 
         remove_journal(&workspace, "one").unwrap();
 
-        assert!(temp.path().join(".suture-recovery").exists());
-        assert!(temp.path().join(".suture-recovery/two.json").exists());
+        assert!(temp.path().join(".threadmoth-recovery").exists());
+        assert!(temp.path().join(".threadmoth-recovery/two.json").exists());
+    }
+
+    #[test]
+    fn recovery_reads_legacy_suture_directory() {
+        let temp = TempDir::new().unwrap();
+        let workspace = Workspace::new(temp.path()).unwrap();
+        workspace.write_file_atomic("x.txt", b"new").unwrap();
+        let journal = Journal {
+            protocol_version: "1.1.0".into(),
+            transaction_id: "legacy".into(),
+            entries: vec![entry("x.txt", b"old", b"new")],
+        };
+        let legacy = temp.path().join(LEGACY_RECOVERY_DIR);
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(
+            legacy.join("legacy.json"),
+            serde_json::to_vec_pretty(&journal).unwrap(),
+        )
+        .unwrap();
+
+        let report = recover_all(&workspace);
+
+        assert_eq!(report.completed, 1);
+        assert_eq!(report.cleaned, 1);
+        assert!(!legacy.exists());
+        assert_eq!(workspace.read_file("x.txt").unwrap(), b"new");
     }
 }
