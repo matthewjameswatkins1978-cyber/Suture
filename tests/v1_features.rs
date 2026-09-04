@@ -1,24 +1,24 @@
-use suture::engine::compute_sha256;
-use suture::lifecycle::FileOperation;
-use suture::pattern::PatternOperation;
-use suture::pipeline::execute_request;
-use suture::protocol::{
+use tempfile::TempDir;
+use threadmoth::engine::compute_sha256;
+use threadmoth::lifecycle::FileOperation;
+use threadmoth::pattern::PatternOperation;
+use threadmoth::pipeline::execute_request;
+use threadmoth::protocol::{
     Cardinality, EffectBudget, OperationPayload, Outcome, RegionGuard, RegionGuardMode, Request,
     TransactionRequest, PROTOCOL_VERSION,
 };
-use suture::provider::code::CodeOperation;
-use suture::provider::json::JsonOperation;
-use suture::provider::jsonc::JsoncProvider;
-use suture::provider::markdown::MarkdownOperation;
-use suture::provider::patch::PatchOperation;
-use suture::provider::text::{TextOperation, TextProvider};
-use suture::provider::yaml::YamlOperation;
-use suture::workspace::Workspace;
-use tempfile::TempDir;
+use threadmoth::provider::code::CodeOperation;
+use threadmoth::provider::json::JsonOperation;
+use threadmoth::provider::jsonc::JsoncProvider;
+use threadmoth::provider::markdown::MarkdownOperation;
+use threadmoth::provider::patch::PatchOperation;
+use threadmoth::provider::text::{TextOperation, TextProvider};
+use threadmoth::provider::yaml::YamlOperation;
+use threadmoth::workspace::Workspace;
 
 #[test]
 fn canonical_examples_are_current_protocol_values() {
-    for example in suture::metadata::examples(None) {
+    for example in threadmoth::metadata::examples(None) {
         if example.request.get("requests").is_some() {
             let transaction: TransactionRequest = serde_json::from_value(example.request).unwrap();
             assert_eq!(transaction.version, PROTOCOL_VERSION, "{}", example.topic);
@@ -31,10 +31,10 @@ fn canonical_examples_are_current_protocol_values() {
 
 #[test]
 fn every_public_reason_code_is_explainable() {
-    let manifest = suture::metadata::capabilities();
+    let manifest = threadmoth::metadata::capabilities();
     for reason in manifest.reason_codes {
         assert_eq!(
-            suture::metadata::reason(reason.code).unwrap().code,
+            threadmoth::metadata::reason(reason.code).unwrap().code,
             reason.code
         );
     }
@@ -42,11 +42,11 @@ fn every_public_reason_code_is_explainable() {
 
 #[test]
 fn every_provider_operation_is_in_canonical_operation_metadata() {
-    let operations: std::collections::HashSet<_> = suture::metadata::operation_metadata()
+    let operations: std::collections::HashSet<_> = threadmoth::metadata::operation_metadata()
         .into_iter()
         .map(|operation| operation.name)
         .collect();
-    for provider in suture::metadata::provider_metadata() {
+    for provider in threadmoth::metadata::provider_metadata() {
         for operation in provider.operations {
             assert!(
                 operations.contains(operation),
@@ -59,7 +59,7 @@ fn every_provider_operation_is_in_canonical_operation_metadata() {
 
 #[test]
 fn capability_operation_selection_refuses_unadvertised_pair() {
-    let view = suture::metadata::capability_view(Some("filesystem.set"));
+    let view = threadmoth::metadata::capability_view(Some("filesystem.set"));
     assert_eq!(view["providers"].as_array().unwrap().len(), 1);
     assert_eq!(view["providers"][0]["operation_supported"], false);
     assert_eq!(view["selection_error"]["operation"], "set");
@@ -68,7 +68,7 @@ fn capability_operation_selection_refuses_unadvertised_pair() {
 
 #[test]
 fn ambiguous_suggestion_never_selects_the_first_provider() {
-    let suggestion = suture::metadata::suggest(
+    let suggestion = threadmoth::metadata::suggest(
         "config.unknown",
         Some("set-value"),
         Some("$.name"),
@@ -86,7 +86,7 @@ fn ambiguous_suggestion_never_selects_the_first_provider() {
 
 #[test]
 fn capabilities_do_not_advertise_unsupported_lifecycle_transactions() {
-    let filesystem = suture::metadata::provider_metadata()
+    let filesystem = threadmoth::metadata::provider_metadata()
         .into_iter()
         .find(|provider| provider.name == "filesystem")
         .unwrap();
@@ -95,7 +95,7 @@ fn capabilities_do_not_advertise_unsupported_lifecycle_transactions() {
 
 #[test]
 fn suggestion_is_schema_valid_and_refusal_recovery_is_machine_readable() {
-    let suggestion = suture::metadata::suggest(
+    let suggestion = threadmoth::metadata::suggest(
         "config.json",
         Some("set-value"),
         Some("$.name"),
@@ -117,7 +117,7 @@ fn suggestion_is_schema_valid_and_refusal_recovery_is_machine_readable() {
         ),
         true,
     );
-    let recovery = suture::metadata::refusal_recovery(&refusal);
+    let recovery = threadmoth::metadata::refusal_recovery(&refusal);
     assert_eq!(recovery["reason_code"], "TARGET_NOT_FOUND");
     assert!(recovery["suggestions"].as_array().unwrap().len() == 1);
 }
@@ -139,7 +139,7 @@ fn request(path: &str, operation: OperationPayload) -> Request {
 
 #[test]
 fn capabilities_are_versioned_and_advertise_budgets() {
-    let caps = serde_json::to_value(suture::capabilities::current()).unwrap();
+    let caps = serde_json::to_value(threadmoth::capabilities::current()).unwrap();
     assert_eq!(caps["protocol_versions"][0], PROTOCOL_VERSION);
     assert!(caps["providers"]
         .as_array()
@@ -206,12 +206,12 @@ fn built_in_pattern_resource_limit_is_explicit() {
 
 #[test]
 fn capability_and_schema_fingerprints_are_deterministic_and_scoped() {
-    let first = suture::metadata::capabilities();
-    let second = suture::metadata::capabilities();
+    let first = threadmoth::metadata::capabilities();
+    let second = threadmoth::metadata::capabilities();
     assert_eq!(first.capability_set_id, second.capability_set_id);
-    let view = suture::metadata::capability_view(Some("json.set"));
+    let view = threadmoth::metadata::capability_view(Some("json.set"));
     assert_eq!(view["selected_operation"]["name"], "set");
-    let schema = suture::metadata::schema(Some("json"));
+    let schema = threadmoth::metadata::schema(Some("json"));
     assert_eq!(schema["protocol_version"], PROTOCOL_VERSION);
     assert!(schema["schema_id"].as_str().is_some());
 }
@@ -226,7 +226,7 @@ fn desired_state_replay_is_no_change() {
         &Cardinality::ExactlyOne,
     )
     .unwrap();
-    let after = suture::engine::apply_byte_edits(b"a\n", &first).unwrap();
+    let after = threadmoth::engine::apply_byte_edits(b"a\n", &first).unwrap();
     let second = TextProvider::plan(
         &after,
         &TextOperation::EnsurePresent {
@@ -250,7 +250,7 @@ fn desired_state_replay_is_no_change() {
 #[test]
 fn desired_state_providers_insert_missing_values_and_preserve_newlines() {
     let yaml = b"name: old\r\n";
-    let edits = suture::provider::yaml::plan(
+    let edits = threadmoth::provider::yaml::plan(
         yaml,
         &YamlOperation::EnsurePresent {
             path: "count".into(),
@@ -260,14 +260,14 @@ fn desired_state_providers_insert_missing_values_and_preserve_newlines() {
     )
     .unwrap();
     assert_eq!(
-        suture::engine::apply_byte_edits(yaml, &edits).unwrap(),
+        threadmoth::engine::apply_byte_edits(yaml, &edits).unwrap(),
         b"name: old\r\ncount: 1\r\n"
     );
 
     let dotenv = b"A=1\r\n";
-    let edits = suture::provider::dotenv::plan(
+    let edits = threadmoth::provider::dotenv::plan(
         dotenv,
-        &suture::provider::dotenv::DotenvOperation::EnsurePresent {
+        &threadmoth::provider::dotenv::DotenvOperation::EnsurePresent {
             key: "B".into(),
             value: "2".into(),
         },
@@ -275,29 +275,29 @@ fn desired_state_providers_insert_missing_values_and_preserve_newlines() {
     )
     .unwrap();
     assert_eq!(
-        suture::engine::apply_byte_edits(dotenv, &edits).unwrap(),
+        threadmoth::engine::apply_byte_edits(dotenv, &edits).unwrap(),
         b"A=1\r\nB=2\r\n"
     );
 
-    let toml = b"name = \"suture\"\n";
-    let edits = suture::provider::toml::TomlProvider::plan(
+    let toml = b"name = \"threadmoth\"\n";
+    let edits = threadmoth::provider::toml::TomlProvider::plan(
         toml,
-        &suture::provider::toml::TomlOperation::EnsurePresent {
+        &threadmoth::provider::toml::TomlOperation::EnsurePresent {
             path: "version".into(),
-            value: suture::provider::toml::TomlValueWrapper::String("1".into()),
+            value: threadmoth::provider::toml::TomlValueWrapper::String("1".into()),
         },
         &Cardinality::ExactlyOne,
     )
     .unwrap();
-    let result = suture::engine::apply_byte_edits(toml, &edits).unwrap();
+    let result = threadmoth::engine::apply_byte_edits(toml, &edits).unwrap();
     assert!(String::from_utf8_lossy(&result).contains("version = \"1\""));
 }
 
 #[test]
 fn dotenv_rejects_multiline_values() {
-    let result = suture::provider::dotenv::plan(
+    let result = threadmoth::provider::dotenv::plan(
         b"A=1\n",
-        &suture::provider::dotenv::DotenvOperation::Set {
+        &threadmoth::provider::dotenv::DotenvOperation::Set {
             key: "A".into(),
             value: "bad\nvalue".into(),
         },
@@ -305,8 +305,8 @@ fn dotenv_rejects_multiline_values() {
     );
     assert!(matches!(
         result,
-        Err(suture::provider::dotenv::DotenvError::Refused(
-            suture::protocol::RefusalReason::MalformedInput { .. }
+        Err(threadmoth::provider::dotenv::DotenvError::Refused(
+            threadmoth::protocol::RefusalReason::MalformedInput { .. }
         ))
     ));
 }
@@ -327,7 +327,7 @@ fn jsonc_comments_are_not_in_edit_ranges() {
         &Cardinality::ExactlyOne,
     )
     .unwrap();
-    let changed = suture::engine::apply_byte_edits(original, &edits).unwrap();
+    let changed = threadmoth::engine::apply_byte_edits(original, &edits).unwrap();
     assert!(String::from_utf8_lossy(&changed).contains("keep this comment"));
 }
 
@@ -400,8 +400,8 @@ fn markdown_ensure_and_insert_do_not_shift_or_duplicate_headings() {
         content: "body".into(),
     };
     let edits =
-        suture::provider::markdown::plan(missing, &ensure, &Cardinality::ExactlyOne).unwrap();
-    let ensured = suture::engine::apply_byte_edits(missing, &edits).unwrap();
+        threadmoth::provider::markdown::plan(missing, &ensure, &Cardinality::ExactlyOne).unwrap();
+    let ensured = threadmoth::engine::apply_byte_edits(missing, &edits).unwrap();
     assert_eq!(ensured, b"intro\n# Added\nbody\n");
 
     let existing = b"# A\nold\n# B\nkeep\n";
@@ -410,15 +410,15 @@ fn markdown_ensure_and_insert_do_not_shift_or_duplicate_headings() {
         content: "new".into(),
     };
     let edits =
-        suture::provider::markdown::plan(existing, &insert, &Cardinality::ExactlyOne).unwrap();
-    let inserted = suture::engine::apply_byte_edits(existing, &edits).unwrap();
+        threadmoth::provider::markdown::plan(existing, &insert, &Cardinality::ExactlyOne).unwrap();
+    let inserted = threadmoth::engine::apply_byte_edits(existing, &edits).unwrap();
     assert_eq!(inserted, b"# A\nnew\nold\n# B\nkeep\n");
 }
 
 #[test]
 fn markdown_list_items_and_fenced_blocks_are_bounded() {
     let list = b"- first\r\n- second\r\n";
-    let edits = suture::provider::markdown::plan(
+    let edits = threadmoth::provider::markdown::plan(
         list,
         &MarkdownOperation::ReplaceListItem {
             target: "second".into(),
@@ -428,12 +428,12 @@ fn markdown_list_items_and_fenced_blocks_are_bounded() {
     )
     .unwrap();
     assert_eq!(
-        suture::engine::apply_byte_edits(list, &edits).unwrap(),
+        threadmoth::engine::apply_byte_edits(list, &edits).unwrap(),
         b"- first\r\n- updated\r\n"
     );
 
     let fenced = b"before\n```rust\nold\n```\nafter\n";
-    let edits = suture::provider::markdown::plan(
+    let edits = threadmoth::provider::markdown::plan(
         fenced,
         &MarkdownOperation::ReplaceFencedBlock {
             info: "rust".into(),
@@ -443,7 +443,7 @@ fn markdown_list_items_and_fenced_blocks_are_bounded() {
     )
     .unwrap();
     assert_eq!(
-        suture::engine::apply_byte_edits(fenced, &edits).unwrap(),
+        threadmoth::engine::apply_byte_edits(fenced, &edits).unwrap(),
         b"before\n```rust\nnew\n```\nafter\n"
     );
 }
@@ -478,7 +478,7 @@ fn multi_file_transaction_prepares_then_commits_and_cleans_journal() {
             ..Default::default()
         },
     };
-    let c = suture::pipeline::execute_transaction(&w, &tx, false);
+    let c = threadmoth::pipeline::execute_transaction(&w, &tx, false);
     assert_eq!(c.outcome, Outcome::Applied);
     assert!(c
         .certificates
@@ -501,7 +501,10 @@ fn multi_file_transaction_prepares_then_commits_and_cleans_journal() {
     );
     assert_eq!(w.read_file("a.txt").unwrap(), b"new-a");
     assert_eq!(w.read_file("b.txt").unwrap(), b"new-b");
-    assert!(!t.path().join(".suture-recovery/tx-v1-test.json").exists());
+    assert!(!t
+        .path()
+        .join(".threadmoth-recovery/tx-v1-test.json")
+        .exists());
 }
 
 #[test]
@@ -764,7 +767,7 @@ fn single_file_transaction_resolves_operations_on_coherent_candidate() {
         ],
         budget: EffectBudget::default(),
     };
-    let c = suture::pipeline::execute_transaction(&w, &tx, false);
+    let c = threadmoth::pipeline::execute_transaction(&w, &tx, false);
     assert_eq!(c.outcome, Outcome::Applied);
     assert_eq!(w.read_file("x.txt").unwrap(), b"first second\n");
 }
@@ -798,7 +801,7 @@ fn single_file_transaction_validates_candidates_before_commit() {
         ],
         budget: EffectBudget::default(),
     };
-    let certificate = suture::pipeline::execute_transaction(&w, &tx, false);
+    let certificate = threadmoth::pipeline::execute_transaction(&w, &tx, false);
     assert_eq!(certificate.outcome, Outcome::Failed);
     assert_eq!(
         certificate.reason_code.as_deref(),

@@ -1,6 +1,6 @@
 # Threat model
 
-Suture assumes the caller may have stale context and the target file may be concurrently modified. The optional expected hash rejects stale observations; Core also hashes the file again immediately before staging. A post-commit read verifies landed bytes.
+Threadmoth assumes the caller may have stale context and the target file may be concurrently modified. The optional expected hash rejects stale observations; Core also hashes the file again immediately before staging. A post-commit read verifies landed bytes.
 
 Path traversal, absolute paths, and symlink escapes are refused. Ancestor checks are repeated while resolving and commit uses a canonical destination path. This narrows pathname races; no portable userspace API makes replacement immune to an attacker with equivalent filesystem authority.
 

@@ -1,6 +1,6 @@
 # Architecture
 
-Suture runs `OBSERVE -> IDENTIFY -> GUARD -> MUTATE -> VERIFY -> CERTIFY`.
+Threadmoth runs `OBSERVE -> IDENTIFY -> GUARD -> MUTATE -> VERIFY -> CERTIFY`.
 
 Core observes bytes through `Workspace`, checks the request version and optional pre-hash, asks exactly one provider for a byte-edit plan, applies edits in memory, validates the candidate, and owns persistence. Providers understand formats and propose edits; only Core commits.
 

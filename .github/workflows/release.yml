@@ -10,23 +10,25 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact: suture-linux-x86_64
-            binary: suture
+            artifact: threadmoth-linux-x86_64
+            binary: threadmoth
           - os: windows-latest
-            artifact: suture-windows-x86_64
-            binary: suture.exe
+            artifact: threadmoth-windows-x86_64
+            binary: threadmoth.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
+      - run: cargo run --release -- benchmark quick --json
+      - run: cargo run --release -- torture --json
       - name: Package Unix
         if: runner.os != 'Windows'
-        run: tar -czf ${{ matrix.artifact }}.tar.gz -C target/release suture
+        run: tar -czf ${{ matrix.artifact }}.tar.gz -C target/release threadmoth
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path target/release/suture.exe -DestinationPath "${{ matrix.artifact }}.zip"
+        run: Compress-Archive -Path target/release/threadmoth.exe -DestinationPath "${{ matrix.artifact }}.zip"
       - name: Checksums Unix
         if: runner.os != 'Windows'
         run: sha256sum "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.sha256"
@@ -53,11 +55,11 @@ jobs:
       - name: Write release manifest
         shell: bash
         run: |
-          tar -xzf dist/suture-linux-x86_64.tar.gz -C dist
-          protocol_version=$(dist/suture capabilities --json --all | jq -r '.protocol_version')
+          tar -xzf dist/threadmoth-linux-x86_64.tar.gz -C dist
+          protocol_version=$(dist/threadmoth capabilities --json --all | jq -r '.protocol_version')
           printf '%s\n' '{' '  "protocol_version": "'"$protocol_version"'",' '  "artifacts": [' > dist/release-manifest.json
           first=1
-          for file in dist/suture-*.*; do
+          for file in dist/threadmoth-*.*; do
             case "$file" in *.sha256|*.json) continue;; esac
             hash=$(sha256sum "$file" | cut -d' ' -f1)
             [ "$first" -eq 1 ] || printf '%s\n' ',' >> dist/release-manifest.json
@@ -65,7 +67,7 @@ jobs:
             first=0
           done
           printf '%s\n' '  ]' '}' >> dist/release-manifest.json
-          rm -f dist/suture
+          rm -f dist/threadmoth
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*

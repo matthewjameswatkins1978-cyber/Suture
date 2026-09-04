@@ -340,6 +340,7 @@ impl Workspace {
             }
             self.ensure_parent(parent)?;
         }
+        self.ensure_windows_replaceable(&resolved)?;
         let mut file = AtomicWriteFile::open(&resolved)?;
         file.write_all(bytes)?;
         file.flush()?;
@@ -367,10 +368,25 @@ impl Workspace {
         if let Some(parent) = resolved.parent() {
             self.ensure_parent(parent)?;
         }
+        self.ensure_windows_replaceable(&resolved)?;
         let mut file = AtomicWriteFile::open(&resolved)?;
         file.write_all(bytes)?;
         file.flush()?;
         file.commit()?;
+        Ok(())
+    }
+
+    fn ensure_windows_replaceable(&self, _path: &Path) -> Result<(), WorkspaceError> {
+        #[cfg(target_os = "windows")]
+        if _path.exists() && fs::metadata(_path)?.permissions().readonly() {
+            return Err(WorkspaceError::Io(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "read-only destination cannot be atomically replaced on Windows: {}",
+                    _path.display()
+                ),
+            )));
+        }
         Ok(())
     }
 
@@ -464,6 +480,36 @@ mod tests {
                 .unwrap(),
             "x.txt"
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn readonly_checked_write_refuses_before_staging() {
+        let t = TempDir::new().unwrap();
+        let path = t.path().join("readonly.txt");
+        fs::write(&path, b"old").unwrap();
+        let original_permissions = fs::metadata(&path).unwrap().permissions();
+        let mut readonly_permissions = original_permissions.clone();
+        readonly_permissions.set_readonly(true);
+        fs::set_permissions(&path, readonly_permissions).unwrap();
+        let workspace = Workspace::new(t.path()).unwrap();
+        let result = workspace.write_file_atomic_checked("readonly.txt", &sha256(b"old"), b"new");
+        let entries: Vec<_> = fs::read_dir(t.path())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::Io(ref error)) if error.kind() == io::ErrorKind::PermissionDenied
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        assert!(!entries
+            .iter()
+            .any(|name| name.starts_with(".readonly.txt.")));
+
+        fs::set_permissions(&path, original_permissions).unwrap();
     }
 
     #[cfg(target_os = "windows")]
