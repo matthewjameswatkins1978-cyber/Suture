@@ -1,5 +1,8 @@
 use schemars::schema_for;
-use std::{env, io::{self, BufRead}};
+use std::{
+    env,
+    io::{self, BufRead},
+};
 use threadmoth::{
     pipeline::execute_request,
     protocol::{Request, TransactionRequest, MAX_REQUEST_BYTES, PROTOCOL_VERSION},
