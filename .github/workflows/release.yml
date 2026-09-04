@@ -20,15 +20,29 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
-      - run: cargo run --release -- benchmark quick --json
-      - run: cargo run --release -- torture --json
+      - run: cargo run --release -- benchmark --quick --json
+      - run: cargo run --release -- benchmark --torture --json
       - name: Package Unix
         if: runner.os != 'Windows'
-        run: tar -czf ${{ matrix.artifact }}.tar.gz -C target/release threadmoth
+        shell: bash
+        run: |
+          mkdir -p package/completions
+          cp target/release/threadmoth package/threadmoth
+          target/release/threadmoth completions bash > package/completions/threadmoth.bash
+          target/release/threadmoth completions zsh > package/completions/_threadmoth
+          target/release/threadmoth completions fish > package/completions/threadmoth.fish
+          target/release/threadmoth manpage --output package/threadmoth.1
+          tar -czf ${{ matrix.artifact }}.tar.gz -C package .
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path target/release/threadmoth.exe -DestinationPath "${{ matrix.artifact }}.zip"
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          New-Item -ItemType Directory -Force package/completions | Out-Null
+          Copy-Item target/release/threadmoth.exe package/threadmoth.exe
+          target/release/threadmoth.exe completions powershell | Out-File -Encoding utf8 package/completions/threadmoth.ps1
+          target/release/threadmoth.exe manpage --output package/threadmoth.1
+          Compress-Archive -Path package/* -DestinationPath "${{ matrix.artifact }}.zip"
       - name: Checksums Unix
         if: runner.os != 'Windows'
         run: sha256sum "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.sha256"
@@ -55,8 +69,9 @@ jobs:
       - name: Write release manifest
         shell: bash
         run: |
-          tar -xzf dist/threadmoth-linux-x86_64.tar.gz -C dist
-          protocol_version=$(dist/threadmoth capabilities --json --all | jq -r '.protocol_version')
+          mkdir -p dist/unpacked
+          tar -xzf dist/threadmoth-linux-x86_64.tar.gz -C dist/unpacked
+          protocol_version=$(dist/unpacked/threadmoth capabilities --json --all | jq -r '.protocol_version')
           printf '%s\n' '{' '  "protocol_version": "'"$protocol_version"'",' '  "artifacts": [' > dist/release-manifest.json
           first=1
           for file in dist/threadmoth-*.*; do
@@ -67,7 +82,7 @@ jobs:
             first=0
           done
           printf '%s\n' '  ]' '}' >> dist/release-manifest.json
-          rm -f dist/threadmoth
+          rm -rf dist/unpacked
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
