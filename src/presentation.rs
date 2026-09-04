@@ -36,7 +36,10 @@ pub(crate) fn truncate(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.into();
     }
-    let mut output = value.chars().take(max_chars.saturating_sub(1)).collect::<String>();
+    let mut output = value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
     output.push('…');
     output
 }
