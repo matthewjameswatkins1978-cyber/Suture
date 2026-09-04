@@ -38,7 +38,12 @@ suture schema
 suture preview --request request.json
 suture mutate --request request.json
 suture recover
+suture benchmark
+suture benchmark tough
+suture torture
 ```
+
+The release binary includes correctness-checked `benchmark` and `torture` commands. `benchmark quick` is a fast smoke profile, `benchmark` is the standard profile, and `benchmark tough` adds large-file, long-line, many-line, and repeated-small-file workloads. Add `--json` for machine-readable reports. `torture` runs refusal, preservation, transaction-cleanup, symlink-containment, and FOOTGUN-100 checks in a disposable workspace and shows explicit setup, running, checking, pass, fail, and host-skip states.
 
 Exit codes are `0` for `APPLIED` or `NO_CHANGE`, `2` for `REFUSED`, and `3` for runtime failure. Machine output is JSON on stdout for mutation commands; diagnostics are kept on stderr.
 

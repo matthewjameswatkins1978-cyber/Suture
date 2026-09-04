@@ -1286,6 +1286,14 @@ pub fn commands() -> Vec<(&'static str, &'static str)> {
             "Inspect and deterministically recover interrupted commits.",
         ),
         ("suggest", "Generate a safe request skeleton for a target."),
+        (
+            "benchmark",
+            "Measure correctness-checked mutation performance with selectable profiles.",
+        ),
+        (
+            "torture",
+            "Run deterministic safety regressions and the FOOTGUN-100 suite.",
+        ),
     ]
 }
 
@@ -1300,6 +1308,8 @@ pub fn command_help(command: &str) -> Option<String> {
         "inspect" => "Read a workspace-relative target's identity, encoding and newline profile; it never mutates.",
         "transact" => "Reads a TransactionRequest and stages every member before commit; transaction-preview prepares without writing.",
         "recover" => "Inspect local recovery journals and complete or restore interrupted transactions with evidence.",
+        "benchmark" => "Use benchmark [quick|standard|tough] [--json] for correctness-checked dry-run performance measurements. The tough profile adds large files, long lines, many lines and repeated small-file workloads.",
+        "torture" => "Run deterministic refusal, preservation, transaction-cleanup, symlink and FOOTGUN-100 checks in a disposable workspace. SKIP is reported for capabilities unavailable on the host.",
         _ => return None,
     };
     Some(text.into())

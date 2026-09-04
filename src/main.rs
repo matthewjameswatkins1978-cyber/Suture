@@ -18,7 +18,7 @@ use suture::{
 const SUTURE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn help() {
-    println!("suture {SUTURE_VERSION} (protocol {PROTOCOL_VERSION}) - deterministic mutation of existing workspace state\n\nSuture changes exactly the state a request authorizes, refuses ambiguity, and returns a certificate. It is not Git, a build/test runner, a formatter, a shell, or an online service.\n\nCOMMANDS");
+    println!("suture {SUTURE_VERSION} (protocol {PROTOCOL_VERSION}) - deterministic mutation of existing workspace state\n\nSuture changes exactly the state a request authorizes, refuses ambiguity, and returns a certificate. It is not Git, a formatter, a shell, or an online service.\n\nCOMMANDS");
     for (name, description) in suture::metadata::commands() {
         println!("  {name:<14} {description}");
     }
@@ -342,6 +342,26 @@ fn main() {
         }
         "examples" => {
             print_examples(args.get(2).map(String::as_str));
+        }
+        "benchmark" => {
+            let profile = option_value(&args, "--profile")
+                .or_else(|| {
+                    args.iter()
+                        .skip(2)
+                        .find(|arg| !arg.starts_with('-'))
+                        .cloned()
+                })
+                .unwrap_or_else(|| "standard".into());
+            let Some(profile) = suture::benchmark::Profile::parse(&profile) else {
+                eprintln!(
+                    "unknown benchmark profile: {profile} (expected quick, standard, or tough)"
+                );
+                std::process::exit(1);
+            };
+            std::process::exit(suture::benchmark::run(profile, bool_flag(&args, "--json")));
+        }
+        "torture" => {
+            std::process::exit(suture::torture::run(bool_flag(&args, "--json")));
         }
         "help" => {
             if let Some(term) = option_value(&args, "--find") {
