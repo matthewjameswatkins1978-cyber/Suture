@@ -151,6 +151,7 @@ fn empty_cert(reason: RefusalReason) -> Certificate {
         },
         transaction_guarantee: "not_committed".into(),
         recovery_state: "not_required".into(),
+        desired_state: None,
     }
 }
 

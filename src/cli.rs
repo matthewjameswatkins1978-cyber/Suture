@@ -45,7 +45,7 @@ pub enum Command {
     TransactionPreview(RequestArgs),
 
     /// Recover interrupted transaction state where possible.
-    Recover,
+    Recover(RecoverArgs),
 
     /// Show machine-readable capabilities, optionally for one file.
     #[command(
@@ -134,6 +134,21 @@ pub struct RequestArgs {
     /// Print a compact human summary instead of the full JSON certificate.
     #[arg(long)]
     pub summary: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct RecoverArgs {
+    /// List internally discovered journals without changing files.
+    #[arg(long, conflicts_with_all = ["inspect", "transaction"])]
+    pub list: bool,
+
+    /// Inspect one internally discovered transaction without changing files.
+    #[arg(long, value_name = "TRANSACTION_ID", conflicts_with_all = ["list", "transaction"])]
+    pub inspect: Option<String>,
+
+    /// Recover one internally discovered transaction by ID.
+    #[arg(long, value_name = "TRANSACTION_ID", conflicts_with_all = ["list", "inspect"])]
+    pub transaction: Option<String>,
 }
 
 #[derive(Args, Debug)]

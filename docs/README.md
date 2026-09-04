@@ -6,7 +6,7 @@ Threadmoth is a fast, deterministic structural search-and-rewrite runtime for AI
 
 | Document | Purpose |
 |---|---|
-| [CLI guide](cli.md) | Threadmoth 1.3 commands, completion, help, manpage generation and compatibility |
+| [CLI guide](cli.md) | Threadmoth 1.5 commands, desired-state mode, recovery inspection, completion, help and manpage generation |
 | [Architecture](architecture.md) | How Threadmoth separates observation, identification, mutation, verification, and commit |
 | [Protocol](protocol.md) | Request/response contract and machine-facing behaviour |
 | [Provider contract](provider-contract.md) | Rules every mutation provider must obey |
@@ -14,6 +14,8 @@ Threadmoth is a fast, deterministic structural search-and-rewrite runtime for AI
 | [Benchmark report](benchmark-report.md) | Reproducible correctness-first performance evidence |
 | [v1 acceptance](v1-acceptance.md) | Acceptance criteria and release guarantees |
 | [v1.1 discovery](v1.1-discovery.md) | Capability/schema discovery behaviour |
+| [Syntax targeting](syntax-targeting.md) | AST-grounded versus AST-typed source-preserving edits |
+| [Desired state](desired-state.md) | Deterministic desired-state planning and verification |
 
 ## Core idea
 
@@ -50,7 +52,7 @@ threadmoth completions powershell
 threadmoth manpage
 ```
 
-See the [CLI guide](cli.md) for shell completion and the Threadmoth 1.3 command surface.
+See the [CLI guide](cli.md) for shell completion and the Threadmoth 1.5 command surface.
 
 For machine integration, mutation output is JSON on stdout, diagnostics are on stderr, and stable exit codes distinguish success/no-change, refusal, and runtime failure.
 

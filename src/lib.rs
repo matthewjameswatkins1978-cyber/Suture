@@ -2,6 +2,7 @@
 
 pub mod benchmark;
 pub mod capabilities;
+pub mod diff_planner;
 pub mod engine;
 pub mod lifecycle;
 pub mod metadata;
@@ -14,3 +15,5 @@ pub mod provider;
 pub mod recovery;
 pub mod torture;
 pub mod workspace;
+
+pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
