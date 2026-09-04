@@ -6,6 +6,7 @@ Threadmoth is a fast, deterministic structural search-and-rewrite runtime for AI
 
 | Document | Purpose |
 |---|---|
+| [CLI guide](cli.md) | Threadmoth 1.3 commands, completion, help, manpage generation and compatibility |
 | [Architecture](architecture.md) | How Threadmoth separates observation, identification, mutation, verification, and commit |
 | [Protocol](protocol.md) | Request/response contract and machine-facing behaviour |
 | [Provider contract](provider-contract.md) | Rules every mutation provider must obey |
@@ -26,15 +27,15 @@ A provider may identify and propose a candidate mutation, but **Core alone commi
 
 ## Performance
 
-Threadmoth includes its own correctness-checked benchmark and torture harnesses:
+Threadmoth includes its own correctness-checked benchmark and torture modes:
 
 ```text
 threadmoth benchmark
-threadmoth benchmark tough
-threadmoth torture
+threadmoth benchmark --tough
+threadmoth benchmark --torture
 ```
 
-The benchmark checks expected bytes before presenting timing results. The checked Windows x86_64 Threadmoth 1.2 tough-profile run recorded sub-millisecond averages for tiny and 30 KB edits, about 7.6 ms for a 1 MB file, and about 252 ms for a 32 MB file, with zero wrong successful mutations in the profile. Treat these as local measurements, not universal platform claims; see the [benchmark report](benchmark-report.md) for the exact evidence.
+The benchmark checks expected bytes before presenting timing results. The current observed tough-profile run recorded about 14.3 ms for a 1 MB file, about 55.7 ms for 5 MB, and about 291 ms for 32 MB, with zero wrong successful mutations across the profile. Treat these as local measurements, not universal platform claims; see the [benchmark report](benchmark-report.md) for the exact evidence.
 
 ## Useful CLI discovery
 
@@ -45,7 +46,11 @@ threadmoth capabilities
 threadmoth schema
 threadmoth examples
 threadmoth suggest PATH
+threadmoth completions powershell
+threadmoth manpage
 ```
+
+See the [CLI guide](cli.md) for shell completion and the Threadmoth 1.3 command surface.
 
 For machine integration, mutation output is JSON on stdout, diagnostics are on stderr, and stable exit codes distinguish success/no-change, refusal, and runtime failure.
 
