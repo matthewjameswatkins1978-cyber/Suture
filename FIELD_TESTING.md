@@ -4,6 +4,46 @@ Threadmoth is ready for field testing by humans and coding agents.
 
 The goal of this phase is not stars. It is evidence: real repository edits, real refusals, real agent behaviour, and real failures we can fix.
 
+## What is Threadmoth replacing?
+
+Threadmoth is aimed at the improvised **last-mile editing toolbox** coding agents commonly assemble from `sed`, regex replacement, `apply_patch`, one-off Python/Node scripts, format-specific editors, direct file writes, and AST tooling.
+
+Those tools are useful. The problem is that an autonomous agent can choose a different mutation path for every task, each with different ambiguity handling, stale-state behaviour, preservation rules, and evidence.
+
+Threadmoth gives those common mutation jobs one deterministic boundary:
+
+```text
+agent intent
+   |
+   +-- text / regex
+   +-- structured data
+   +-- syntax nodes
+   +-- exact patches
+   +-- desired file state
+   +-- filesystem operations
+          |
+          v
+      THREADMOTH
+          |
+ identity + cardinality
+ effect budgets
+ stale-state checks
+ containment
+ verification
+ recovery
+ certificate
+```
+
+It does **not** try to abolish specialist tools. A formatter such as `rustfmt`, Prettier, Black, or `gofmt` can still decide the desired state; Threadmoth can be the guarded mutation boundary that decides whether that state is allowed to land.
+
+Read [What Threadmoth replaces](docs/what-threadmoth-replaces.md) for the full comparison.
+
+During field testing, a particularly useful question is:
+
+> **When your agent did not use Threadmoth, what did it use instead, and why?**
+
+That tells us whether Threadmoth is actually replacing the risky editing paths it was built to replace.
+
 ## What we want to learn
 
 Please try Threadmoth on ordinary work and tell us:
@@ -12,7 +52,7 @@ Please try Threadmoth on ordinary work and tell us:
 - Did `threadmoth suggest`, `capabilities`, `examples`, and `--help` get you to a usable request quickly?
 - Did Threadmoth refuse an edit that should have worked?
 - Did it ever touch bytes you did not expect?
-- Did you fall back to raw editing? If so, why?
+- Did you fall back to raw editing? If so, why and what tool did you use instead?
 - Was a refusal useful enough to recover from?
 - Which operating system, shell, language, and coding agent were you using?
 
@@ -103,6 +143,7 @@ A useful report can be short. Please include:
 - the command or request used
 - expected result
 - actual result
+- what the agent would otherwise have used to edit the file, if known
 - certificate/refusal output if relevant
 
 Please remove secrets, private paths, tokens, and proprietary source before posting.
