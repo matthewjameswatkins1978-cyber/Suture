@@ -1,14 +1,15 @@
 #![forbid(unsafe_code)]
 
+use crate::diff_planner;
 use crate::engine::{apply_byte_edits, compute_sha256, ByteEdit};
 use crate::lifecycle::FileOperation;
 use crate::path::PathNormalizer;
 use crate::pattern::{self, PatternError};
 use crate::protocol::{
-    ByteRange, Certificate, CommitGuarantee, EffectBudget, EffectUsage, FailureReason,
-    MutationPlan, OperationPayload, Outcome, PreservationFacts, RefusalReason, Request,
-    StructuralValidation, TransactionCertificate, TransactionRequest, MAX_FILE_BYTES,
-    MAX_TRANSACTION_REQUESTS, PROTOCOL_VERSION,
+    ByteRange, Certificate, CommitGuarantee, DesiredStateEvidence, DesiredStateOperation,
+    EffectBudget, EffectUsage, FailureReason, MutationPlan, OperationPayload, Outcome,
+    PreservationFacts, RefusalReason, Request, StructuralValidation, TransactionCertificate,
+    TransactionRequest, MAX_FILE_BYTES, MAX_TRANSACTION_REQUESTS, PROTOCOL_VERSION,
 };
 use crate::provider::code::{self, CodeError, CodeOperation};
 use crate::provider::dotenv::{self, DotenvError};
@@ -18,6 +19,7 @@ use crate::provider::markdown::{self, MarkdownError};
 use crate::provider::patch::{self, PatchError};
 use crate::provider::text::{TextOperation, TextProvider, TextProviderError};
 use crate::provider::toml::{TomlProvider, TomlProviderError};
+use crate::provider::web::{self, WebError, WebOperation};
 use crate::provider::yaml::{self, YamlError};
 use crate::recovery::{self, Journal, JournalEntry};
 use crate::workspace::{Workspace, WorkspaceError};
@@ -176,6 +178,19 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
             )
         }
     };
+    if let Some(desired) = desired_bytes(request) {
+        if candidate != desired {
+            return failure(
+                request,
+                &file_path,
+                provider,
+                pre_hash,
+                FailureReason::InternalInvariant {
+                    details: "desired-state planner produced bytes different from the requested desired state".into(),
+                },
+            );
+        }
+    }
     let ranges = changed_ranges(&engine_edits);
     let line_ranges = changed_line_ranges(&original, &engine_edits);
     let effect = effect_usage(&original, &candidate, &engine_edits, &request.budget);
@@ -203,7 +218,7 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
         }
     };
     if candidate == original {
-        return completed(
+        let mut certificate = completed(
             request,
             &file_path,
             provider,
@@ -216,8 +231,15 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
             CommitGuarantee::default(),
             String::new(),
             false,
-            effect,
+            effect.clone(),
         );
+        attach_desired_evidence(
+            desired_bytes(request),
+            &engine_edits,
+            &effect,
+            &mut certificate,
+        );
+        return certificate;
     }
     let post_hash = compute_sha256(&candidate);
     let (diff, diff_truncated) = bounded_diff(&original, &engine_edits);
@@ -306,9 +328,15 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
         commit,
         diff,
         diff_truncated,
-        effect,
+        effect.clone(),
     );
     certificate.changed_line_ranges = line_ranges;
+    attach_desired_evidence(
+        desired_bytes(request),
+        &engine_edits,
+        &effect,
+        &mut certificate,
+    );
     certificate
 }
 
@@ -447,6 +475,19 @@ fn prepare_content_request(
             ))
         }
     };
+    if let Some(desired) = desired_bytes(request) {
+        if candidate != desired {
+            return Err(failure(
+                request,
+                &file_path,
+                provider,
+                pre_hash,
+                FailureReason::InternalInvariant {
+                    details: "desired-state planner produced bytes different from the requested desired state".into(),
+                },
+            ));
+        }
+    }
     let effect = effect_usage(&original, &candidate, &edits, &request.budget);
     if let Some((dimension, limit, actual)) = budget_violation(&effect, &request.budget) {
         return Err(refusal_with_effect(
@@ -491,9 +532,10 @@ fn prepare_content_request(
             diff
         },
         diff_truncated,
-        effect,
+        effect.clone(),
     );
     certificate.changed_line_ranges = changed_line_ranges(&original, &edits);
+    attach_desired_evidence(desired_bytes(request), &edits, &effect, &mut certificate);
     Ok(PreparedContent {
         path: file_path,
         original,
@@ -905,6 +947,16 @@ fn execute_single_file_transaction(
                 )
             }
         };
+        if let Some(desired) = desired_bytes(request) {
+            if candidate != desired {
+                return transaction_failure(
+                    transaction,
+                    FailureReason::InternalInvariant {
+                        details: "desired-state planner produced bytes different from the requested desired state".into(),
+                    },
+                );
+            }
+        }
         if candidate.len() > MAX_FILE_BYTES {
             return transaction_refusal(
                 transaction,
@@ -954,9 +1006,10 @@ fn execute_single_file_transaction(
             },
             bounded_diff(&current, &edits).0,
             false,
-            effect,
+            effect.clone(),
         );
         certificate.changed_line_ranges = changed_line_ranges(&current, &edits);
+        attach_desired_evidence(desired_bytes(request), &edits, &effect, &mut certificate);
         certificates.push(certificate);
         current = candidate;
     }
@@ -1252,6 +1305,36 @@ fn plan_edits(
                 }
             })
         }
+        OperationPayload::Web(o) => web::plan(original, o, &request.cardinality).map_err(|e| {
+            let detail = e.to_string();
+            match e {
+                WebError::Refused(r) => (r, detail),
+            }
+        }),
+        OperationPayload::DesiredState(DesiredStateOperation::Replace { desired_bytes }) => {
+            diff_planner::plan(original, desired_bytes)
+                .map(|plan| plan.edits)
+                .map_err(|error| {
+                    let detail = error.to_string();
+                    let reason = match error {
+                        diff_planner::DiffPlannerError::ResourceLimit {
+                            dimension,
+                            limit,
+                            actual,
+                        } => RefusalReason::ResourceLimitExceeded {
+                            dimension: dimension.into(),
+                            limit,
+                            actual,
+                        },
+                        diff_planner::DiffPlannerError::Invariant(details) => {
+                            RefusalReason::Custom {
+                                message: format!("INTERNAL PLANNER INVARIANT FAILURE: {details}"),
+                            }
+                        }
+                    };
+                    (reason, detail)
+                })
+        }
     }
 }
 
@@ -1323,6 +1406,16 @@ fn validate_candidate(
             format: "dotenv_lines".into(),
         }),
         OperationPayload::Patch(_) => Ok(StructuralValidation::NotApplicable),
+        OperationPayload::Web(operation) => {
+            let language = web_language(operation);
+            web::validate(candidate, language).map_err(|error| FailureReason::ProviderError {
+                details: error.to_string(),
+            })?;
+            Ok(StructuralValidation::Valid {
+                format: format!("tree_sitter:{language}"),
+            })
+        }
+        OperationPayload::DesiredState(_) => Ok(StructuralValidation::NotApplicable),
     }
 }
 
@@ -1774,6 +1867,8 @@ fn provider_name(op: &OperationPayload) -> &'static str {
         OperationPayload::Code(_) => "code",
         OperationPayload::Dotenv(_) => "dotenv",
         OperationPayload::Patch(_) => "patch",
+        OperationPayload::Web(_) => "web",
+        OperationPayload::DesiredState(_) => "desired_state",
     }
 }
 fn provider_version(op: &OperationPayload) -> &'static str {
@@ -1789,6 +1884,8 @@ fn provider_version(op: &OperationPayload) -> &'static str {
         OperationPayload::Code(_) => "tree-sitter-node-v1",
         OperationPayload::Dotenv(_) => "dotenv-lines-v1",
         OperationPayload::Patch(_) => "unified-diff-strict-v1",
+        OperationPayload::Web(_) => "tree-sitter-web-node-v1",
+        OperationPayload::DesiredState(_) => "strict-derived-bounded-edits-v1",
     }
 }
 fn unsupported_encoding(bytes: &[u8]) -> Option<RefusalReason> {
@@ -2114,6 +2211,48 @@ fn completed(
         effect,
         transaction_guarantee,
         recovery_state: "not_required".into(),
+        desired_state: None,
+    }
+}
+
+fn desired_bytes(request: &Request) -> Option<&[u8]> {
+    match &request.operation {
+        OperationPayload::DesiredState(DesiredStateOperation::Replace { desired_bytes }) => {
+            Some(desired_bytes)
+        }
+        _ => None,
+    }
+}
+
+fn attach_desired_evidence(
+    desired: Option<&[u8]>,
+    edits: &[ByteEdit],
+    effect: &EffectUsage,
+    certificate: &mut Certificate,
+) {
+    let Some(desired) = desired else { return };
+    certificate.desired_state = Some(DesiredStateEvidence {
+        mode: "desired_state".into(),
+        desired_hash: compute_sha256(desired),
+        derived_region_count: edits.len(),
+        changed_lines: effect.changed_lines,
+        changed_bytes: effect.changed_bytes,
+        verification: if certificate.outcome == Outcome::NoChange {
+            "pre_hash_equals_desired_hash".into()
+        } else if certificate.outcome == Outcome::Applied {
+            "post_hash_equals_desired_hash".into()
+        } else {
+            "plan_candidate_verified".into()
+        },
+    });
+}
+
+fn web_language(operation: &WebOperation) -> &str {
+    match operation {
+        WebOperation::ReplaceNode { language, .. }
+        | WebOperation::InsertBeforeNode { language, .. }
+        | WebOperation::InsertAfterNode { language, .. }
+        | WebOperation::RemoveNode { language, .. } => language,
     }
 }
 

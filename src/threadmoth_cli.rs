@@ -22,7 +22,7 @@ use threadmoth::{
 
 use cli::{
     BenchmarkArgs, BenchmarkProfile, CapabilitiesArgs, Cli, Command, CompletionShell, HelpArgs,
-    SchemaArgs, SuggestArgs, THREADMOTH_VERSION,
+    RecoverArgs, SchemaArgs, SuggestArgs, THREADMOTH_VERSION,
 };
 
 fn main() {
@@ -36,7 +36,7 @@ fn main() {
         Command::TransactionPreview(args) => {
             run_transaction(args.request.as_deref(), true, args.summary)
         }
-        Command::Recover => run_recover(),
+        Command::Recover(args) => run_recover(args),
         Command::Capabilities(args) => run_capabilities(args),
         Command::Examples { topic } => print_examples(topic.as_deref()),
         Command::Benchmark(args) => run_benchmark(args),
@@ -329,7 +329,7 @@ fn exit_for_outcome(outcome: Outcome) {
     }
 }
 
-fn run_recover() {
+fn run_recover(args: RecoverArgs) {
     let root = env::current_dir().unwrap_or_else(|_| ".".into());
     let ws = match Workspace::new(root) {
         Ok(w) => w,
@@ -338,10 +338,20 @@ fn run_recover() {
             std::process::exit(3)
         }
     };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&threadmoth::recovery::recover_all(&ws)).unwrap()
-    );
+    let output = if args.list {
+        serde_json::to_value(threadmoth::recovery::list(&ws)).unwrap()
+    } else if let Some(transaction_id) = args.inspect {
+        serde_json::to_value(threadmoth::recovery::inspect(&ws, &transaction_id)).unwrap()
+    } else if let Some(transaction_id) = args.transaction {
+        serde_json::to_value(threadmoth::recovery::recover_transaction(
+            &ws,
+            &transaction_id,
+        ))
+        .unwrap()
+    } else {
+        serde_json::to_value(threadmoth::recovery::recover_all(&ws)).unwrap()
+    };
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
 }
 
 fn run_capabilities(args: CapabilitiesArgs) {
@@ -696,6 +706,7 @@ fn empty_cert(reason: RefusalReason) -> Certificate {
         },
         transaction_guarantee: "not_committed".into(),
         recovery_state: "not_required".into(),
+        desired_state: None,
     }
 }
 

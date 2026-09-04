@@ -12,6 +12,10 @@
 
 Threadmoth is a small Rust runtime for **safe, source-preserving file mutation**. It gives agents a much better option than “open file, edit some text, hope for the best.”
 
+> The parser gets to point at the cloth. It doesn’t get to re-weave it.
+
+Threadmoth 1.5 adds statically compiled code and web grammars behind one shared syntax engine, plus a language-neutral desired-state planner. Providers and planners propose `Vec<ByteEdit>`; Core alone guards, applies, verifies, and certifies them.
+
 It can target text, structured data, configuration files, Markdown, dotenv files, regex patterns, syntax-aware code operations, strict patches, and guarded file lifecycle operations while preserving unrelated bytes. Every successful mutation is checked, committed through one controlled core, and returned with evidence describing what was observed and what actually changed.
 
 The execution pipeline is deliberately boring in the best possible way:
@@ -65,7 +69,7 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Threadmoth 1.3.1 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
+Threadmoth 1.5.0 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
 
 ```text
 PASS  8/8 cases · 0 wrong mutations · correctness checked
@@ -227,12 +231,14 @@ Threadmoth currently supports:
 | dotenv | key edits while preserving comments |
 | Pattern | bounded Rust regex operations |
 | Patch | exact unified-diff application with no fuzzy relocation |
-| Code | Tree-sitter syntax-aware targeting for JavaScript/TypeScript, Python, Rust, and Go |
+| Code | Shared Tree-sitter syntax-aware targeting for JavaScript, JSX, TypeScript, TSX, Python, Rust, Go, C, C++, Bash/Shell, PowerShell, and common SQL |
+| Web | Shared structural Tree-sitter targeting for HTML, CSS, and XML |
+| Desired state | Deterministic bounded diff from observed bytes to explicitly supplied desired bytes |
 | Filesystem | guarded create/delete/rename/move operations |
 
 Providers propose candidates. **Core alone commits them.**
 
-`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.3.1 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
+`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.5.0 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
 
 ## Real-world dogfood: Lantern Keeper
 
@@ -274,6 +280,9 @@ threadmoth suggest PATH
 threadmoth preview --request request.json
 threadmoth mutate --request request.json
 threadmoth recover
+threadmoth recover --list
+threadmoth recover --inspect TRANSACTION_ID
+threadmoth recover --transaction TRANSACTION_ID
 threadmoth benchmark
 threadmoth benchmark --tough
 threadmoth benchmark --torture

@@ -106,13 +106,18 @@ impl Workspace {
             let relative = resolved
                 .strip_prefix(&self.root)
                 .map_err(|_| WorkspaceError::Traversal(path.into()))?;
-            return Ok(relative.to_string_lossy().replace('\\', "/"));
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            reject_internal_namespace(&relative)?;
+            return Ok(relative);
         }
-        Ok(PathNormalizer::normalize(path, namespace))
+        let normalized = PathNormalizer::normalize(path, namespace);
+        reject_internal_namespace(&normalized)?;
+        Ok(normalized)
     }
 
     pub fn resolve_path<P: AsRef<Path>>(&self, rel_path: P) -> Result<PathBuf, WorkspaceError> {
         let rel = rel_path.as_ref();
+        reject_internal_namespace(&rel.to_string_lossy())?;
         if rel.is_absolute() || rel.to_string_lossy().as_bytes().get(1) == Some(&b':') {
             return Err(WorkspaceError::Traversal(format!(
                 "absolute path not allowed: {}",
@@ -409,6 +414,20 @@ impl Workspace {
         }
         Ok(())
     }
+}
+
+fn reject_internal_namespace(path: &str) -> Result<(), WorkspaceError> {
+    let normalized = path.replace('\\', "/");
+    if normalized == ".threadmoth-recovery"
+        || normalized.starts_with(".threadmoth-recovery/")
+        || normalized == ".suture-recovery"
+        || normalized.starts_with(".suture-recovery/")
+    {
+        return Err(WorkspaceError::Traversal(format!(
+            "Threadmoth recovery namespace is reserved: {path}"
+        )));
+    }
+    Ok(())
 }
 
 fn sha256(bytes: &[u8]) -> String {

@@ -2,14 +2,14 @@
 
 use crate::engine::ByteEdit;
 use crate::protocol::{Cardinality, RefusalReason};
-use crate::provider::syntax::{self, LanguageFamily, Placement, StructuralTargeting};
+use crate::provider::syntax::{self, LanguageFamily, Placement};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CodeOperation {
+pub enum WebOperation {
     ReplaceNode {
         language: String,
         target: String,
@@ -40,18 +40,18 @@ pub enum CodeOperation {
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
-pub enum CodeError {
+pub enum WebError {
     #[error("Refused: {0:?}")]
     Refused(RefusalReason),
 }
 
 pub fn plan(
     content: &[u8],
-    op: &CodeOperation,
+    op: &WebOperation,
     cardinality: &Cardinality,
-) -> Result<Vec<ByteEdit>, CodeError> {
+) -> Result<Vec<ByteEdit>, WebError> {
     let (language, target, replacement, placement, node_kind) = match op {
-        CodeOperation::ReplaceNode {
+        WebOperation::ReplaceNode {
             language,
             target,
             replacement,
@@ -63,7 +63,7 @@ pub fn plan(
             Placement::Replace,
             node_kind,
         ),
-        CodeOperation::InsertBeforeNode {
+        WebOperation::InsertBeforeNode {
             language,
             target,
             content,
@@ -75,7 +75,7 @@ pub fn plan(
             Placement::Before,
             node_kind,
         ),
-        CodeOperation::InsertAfterNode {
+        WebOperation::InsertAfterNode {
             language,
             target,
             content,
@@ -87,7 +87,7 @@ pub fn plan(
             Placement::After,
             node_kind,
         ),
-        CodeOperation::RemoveNode {
+        WebOperation::RemoveNode {
             language,
             target,
             node_kind,
@@ -100,31 +100,23 @@ pub fn plan(
         replacement,
         placement,
         node_kind.as_deref(),
-        LanguageFamily::Code,
+        LanguageFamily::Web,
         cardinality,
     )
     .map(|plan| plan.edits)
     .map_err(|error| match error {
-        syntax::SyntaxError::Refused(reason) => CodeError::Refused(reason),
-        syntax::SyntaxError::Engine(error) => CodeError::Refused(RefusalReason::Custom {
+        syntax::SyntaxError::Refused(reason) => WebError::Refused(reason),
+        syntax::SyntaxError::Engine(error) => WebError::Refused(RefusalReason::Custom {
             message: error.to_string(),
         }),
     })
 }
 
-pub fn validate(content: &[u8], language_name: &str) -> Result<(), CodeError> {
+pub fn validate(content: &[u8], language_name: &str) -> Result<(), WebError> {
     syntax::validate(content, language_name).map_err(|error| match error {
-        syntax::SyntaxError::Refused(reason) => CodeError::Refused(reason),
-        syntax::SyntaxError::Engine(error) => CodeError::Refused(RefusalReason::Custom {
+        syntax::SyntaxError::Refused(reason) => WebError::Refused(reason),
+        syntax::SyntaxError::Engine(error) => WebError::Refused(RefusalReason::Custom {
             message: error.to_string(),
         }),
     })
-}
-
-pub fn targeting(node_kind: Option<&str>) -> StructuralTargeting {
-    if node_kind.is_some() {
-        StructuralTargeting::AstTyped
-    } else {
-        StructuralTargeting::AstGrounded
-    }
 }

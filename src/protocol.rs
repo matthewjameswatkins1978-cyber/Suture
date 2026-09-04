@@ -8,6 +8,7 @@ use crate::provider::markdown::MarkdownOperation;
 use crate::provider::patch::PatchOperation;
 use crate::provider::text::TextOperation;
 use crate::provider::toml::TomlOperation;
+use crate::provider::web::WebOperation;
 use crate::provider::yaml::YamlOperation;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,16 @@ pub enum OperationPayload {
     Code(CodeOperation),
     Dotenv(DotenvOperation),
     Patch(PatchOperation),
+    Web(WebOperation),
+    DesiredState(DesiredStateOperation),
+}
+
+/// A language-neutral plan constructor. The desired bytes are data supplied
+/// by the caller; Threadmoth never executes the program that produced them.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DesiredStateOperation {
+    Replace { desired_bytes: Vec<u8> },
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
@@ -398,6 +409,19 @@ pub struct Certificate {
     pub effect: EffectUsage,
     pub transaction_guarantee: String,
     pub recovery_state: String,
+    #[serde(default)]
+    pub desired_state: Option<DesiredStateEvidence>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DesiredStateEvidence {
+    pub mode: String,
+    pub desired_hash: String,
+    pub derived_region_count: usize,
+    pub changed_lines: usize,
+    pub changed_bytes: usize,
+    pub verification: String,
 }
 
 impl Default for PreservationFacts {

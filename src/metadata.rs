@@ -16,8 +16,10 @@ use crate::provider::code::CodeOperation;
 use crate::provider::dotenv::DotenvOperation;
 use crate::provider::json::JsonOperation;
 use crate::provider::patch::PatchOperation;
+use crate::provider::syntax::{self, LanguageFamily};
 use crate::provider::text::TextOperation;
 use crate::provider::toml::{TomlOperation, TomlValueWrapper};
+use crate::provider::web::WebOperation;
 use crate::provider::yaml::YamlOperation;
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
@@ -49,6 +51,7 @@ pub struct ProviderMetadata {
     pub encodings: Vec<&'static str>,
     pub transaction_support: &'static str,
     pub durable_anchor_support: bool,
+    pub languages: Vec<&'static str>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -92,6 +95,12 @@ pub struct CapabilityManifest {
     pub encodings: Vec<&'static str>,
     pub path_namespaces: Vec<&'static str>,
     pub code_languages: Vec<&'static str>,
+    pub web_formats: Vec<&'static str>,
+    pub structural_operations: Vec<&'static str>,
+    pub ast_grounded: bool,
+    pub ast_typed: bool,
+    pub desired_state: bool,
+    pub recovery_inspection: bool,
     pub guard_modes: Vec<&'static str>,
     pub transaction_capabilities: TransactionCapabilities,
     pub resource_limits: ResourceLimits,
@@ -111,6 +120,8 @@ pub struct Example {
 #[derive(Serialize, Clone, Debug)]
 pub struct Suggestion {
     pub provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     pub detection_basis: String,
     pub goal: Option<String>,
     pub mode: String,
@@ -325,6 +336,14 @@ pub fn operation_metadata() -> Vec<OperationMetadata> {
             vec!["unrelated_bytes"],
         ),
         op(
+            "replace_desired_state",
+            "Derive bounded edits for explicitly supplied desired bytes.",
+            "desired_bytes",
+            true,
+            "mixed",
+            vec!["explicit_desired_divergence"],
+        ),
+        op(
             "unified_diff",
             "Apply one exact unified diff.",
             "exact_preimage",
@@ -527,6 +546,27 @@ pub fn provider_metadata() -> Vec<ProviderMetadata> {
             true,
         ),
         provider(
+            "web",
+            "tree-sitter-web-node-v1",
+            vec![
+                "replace_node",
+                "insert_before_node",
+                "insert_after_node",
+                "remove_node",
+            ],
+            vec!["syntax_node_text", "syntax_node_kind"],
+            "unrelated source bytes where ranges permit",
+            true,
+        ),
+        provider(
+            "desired_state",
+            "strict-derived-bounded-edits-v1",
+            vec!["replace_desired_state"],
+            vec!["workspace_relative_path", "desired_bytes"],
+            "all divergence is explicit in supplied desired bytes",
+            false,
+        ),
+        provider(
             "filesystem",
             "lifecycle-checked-v1",
             vec!["create_file", "delete_file", "rename_file", "move_file"],
@@ -561,6 +601,19 @@ fn provider(
             "single_file_and_multi_file"
         },
         durable_anchor_support: durable,
+        languages: match name {
+            "code" => syntax::registry()
+                .iter()
+                .filter(|spec| spec.family == LanguageFamily::Code)
+                .map(|spec| spec.id)
+                .collect(),
+            "web" => syntax::registry()
+                .iter()
+                .filter(|spec| spec.family == LanguageFamily::Web)
+                .map(|spec| spec.id)
+                .collect(),
+            _ => Vec::new(),
+        },
     }
 }
 
@@ -798,6 +851,14 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
     out
 }
 
+fn registry_ids(family: LanguageFamily) -> Vec<&'static str> {
+    syntax::registry()
+        .iter()
+        .filter(|spec| spec.family == family)
+        .map(|spec| spec.id)
+        .collect()
+}
+
 pub fn capabilities() -> CapabilityManifest {
     let providers = provider_metadata();
     let operations = operation_metadata();
@@ -813,7 +874,13 @@ pub fn capabilities() -> CapabilityManifest {
         "preservation_guarantees": ["unrelated_bytes", "utf8", "utf8_bom", "lf", "crlf", "final_newline", "comments_where_supported"],
         "encodings": ["utf8", "utf8_bom"],
         "path_namespaces": ["native", "windows", "wsl", "posix"],
-        "code_languages": ["javascript", "typescript", "jsx", "tsx", "python", "rust", "go"],
+        "code_languages": registry_ids(LanguageFamily::Code),
+        "web_formats": registry_ids(LanguageFamily::Web),
+        "structural_operations": ["replace_node", "insert_before_node", "insert_after_node", "remove_node"],
+        "ast_grounded": true,
+        "ast_typed": true,
+        "desired_state": true,
+        "recovery_inspection": true,
         "guard_modes": ["immediate", "strict_snapshot", "region_snapshot", "structural_snapshot"],
         "transaction_capabilities": {"single_file": true, "multi_file": true, "rollback": true, "crash_recovery": true},
         "resource_limits": {"max_request_bytes": MAX_REQUEST_BYTES, "max_transaction_requests": MAX_TRANSACTION_REQUESTS, "max_diagnostic_bytes": 4096, "max_pattern_bytes": 8192, "max_file_bytes": MAX_FILE_BYTES},
@@ -851,15 +918,18 @@ pub fn capabilities() -> CapabilityManifest {
         ],
         encodings: vec!["utf8", "utf8_bom"],
         path_namespaces: vec!["native", "windows", "wsl", "posix"],
-        code_languages: vec![
-            "javascript",
-            "typescript",
-            "jsx",
-            "tsx",
-            "python",
-            "rust",
-            "go",
+        code_languages: registry_ids(LanguageFamily::Code),
+        web_formats: registry_ids(LanguageFamily::Web),
+        structural_operations: vec![
+            "replace_node",
+            "insert_before_node",
+            "insert_after_node",
+            "remove_node",
         ],
+        ast_grounded: true,
+        ast_typed: true,
+        desired_state: true,
+        recovery_inspection: true,
         guard_modes: vec![
             "immediate",
             "strict_snapshot",
@@ -977,7 +1047,7 @@ fn digest_without_id(value: &Value) -> String {
 pub fn schema(scope: Option<&str>) -> Value {
     let mut document = json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "title": "Threadmoth 1.2 Protocol Schemas",
+        "title": format!("Threadmoth {} Protocol Schemas", env!("CARGO_PKG_VERSION")),
         "protocol_version": PROTOCOL_VERSION,
         "scope": scope.unwrap_or("all"),
         "request": schema_for!(Request),
@@ -1332,6 +1402,19 @@ pub fn reason(code: &str) -> Option<ReasonMetadata> {
 }
 
 pub fn detect_provider(path: &str, bytes: Option<&[u8]>) -> (String, String, Vec<String>) {
+    if let Some(language) = syntax::suggest_extension(path) {
+        let family = syntax::lookup(language).map(|spec| spec.family);
+        let provider = match family {
+            Some(LanguageFamily::Code) => "code",
+            Some(LanguageFamily::Web) => "web",
+            None => "text",
+        };
+        return (
+            provider.into(),
+            format!("registry extension for {language}"),
+            Vec::new(),
+        );
+    }
     let lower = path.to_ascii_lowercase();
     let extension = std::path::Path::new(&lower)
         .extension()
@@ -1437,6 +1520,7 @@ pub fn suggest(
     }
     Suggestion {
         provider: detected.clone(),
+        language: syntax::suggest_extension(path).map(str::to_owned),
         detection_basis: basis,
         goal: goal.map(str::to_owned),
         mode: mode.into(),
@@ -1561,6 +1645,12 @@ fn template_for(
                 replacement: "NEW_NODE".into(),
                 node_kind: None,
             }),
+            "web" => OperationPayload::Web(WebOperation::ReplaceNode {
+                language: language_for_path(path),
+                target: "OLD_NODE".into(),
+                replacement: "NEW_NODE".into(),
+                node_kind: None,
+            }),
             _ => OperationPayload::Text(TextOperation::Rename {
                 target: "OLD_TEXT".into(),
                 replacement: "NEW_TEXT".into(),
@@ -1583,6 +1673,12 @@ fn template_for(
                 language: language_for_path(path),
                 target: "OLD_LITERAL".into(),
                 replacement: "NEW_LITERAL".into(),
+                node_kind: None,
+            }),
+            "web" => OperationPayload::Web(WebOperation::ReplaceNode {
+                language: language_for_path(path),
+                target: "OLD_NODE".into(),
+                replacement: "NEW_NODE".into(),
                 node_kind: None,
             }),
             _ => OperationPayload::Text(TextOperation::Set {
@@ -1654,20 +1750,9 @@ fn template_for(
 }
 
 fn language_for_path(path: &str) -> String {
-    match std::path::Path::new(path)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-    {
-        "py" => "python",
-        "rs" => "rust",
-        "go" => "go",
-        "ts" => "typescript",
-        "tsx" => "tsx",
-        "jsx" => "jsx",
-        _ => "javascript",
-    }
-    .into()
+    syntax::suggest_extension(path)
+        .map(str::to_owned)
+        .unwrap_or_else(|| "javascript".into())
 }
 
 pub fn refusal_recovery(certificate: &crate::protocol::Certificate) -> Value {
