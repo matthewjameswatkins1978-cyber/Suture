@@ -41,7 +41,7 @@ Threadmoth turns that final step into a narrow deterministic operation with expl
 
 ## It is also very quick
 
-Threadmoth ships with correctness-checked benchmark and torture commands. In an observed Threadmoth 1.2 `tough`-profile run:
+Threadmoth ships with correctness-checked benchmark and torture modes. In an observed Threadmoth 1.2 `tough`-profile run:
 
 | workload | average |
 |---|---:|
@@ -61,8 +61,8 @@ Put another way: Threadmoth can inspect, constrain, mutate, verify, and certify 
 These are local measurements rather than universal cross-platform claims, so the checked-in benchmark harness remains the source of truth. See the [benchmark report](docs/benchmark-report.md) and run it on your own machine:
 
 ```text
-threadmoth benchmark tough
-threadmoth torture
+threadmoth benchmark --tough
+threadmoth benchmark --torture
 ```
 
 ## Install
@@ -75,7 +75,71 @@ Building from source requires Rust 1.85 or newer:
 cargo install --path .
 ```
 
-`threadmoth` is the canonical command for the 1.2 release. The legacy `suture` executable remains as a compatibility alias during the name migration.
+`threadmoth` is the canonical command for the 1.3 release. The legacy `suture` executable remains available during the name migration.
+
+## CLI that behaves like a proper CLI
+
+Threadmoth 1.3 moves the command surface onto a structured `clap` grammar. That gives the binary generated help, typo suggestions, typed arguments, shell completion and manpage generation from the same source of truth.
+
+The benchmark family is now deliberately simple:
+
+```text
+threadmoth benchmark
+threadmoth benchmark --quick
+threadmoth benchmark --tough
+threadmoth benchmark --torture
+```
+
+Short forms are available too:
+
+```text
+threadmoth benchmark -q
+threadmoth benchmark -t
+threadmoth benchmark -x
+```
+
+Existing automation using `threadmoth benchmark tough` or `threadmoth torture` remains compatible for this release, but the flag forms above are canonical.
+
+### Shell completion
+
+Generate completion directly from the binary:
+
+```text
+threadmoth completions powershell
+threadmoth completions bash
+threadmoth completions zsh
+threadmoth completions fish
+```
+
+Once that output is installed into your shell’s normal completion location, Tab completion understands Threadmoth commands, flags, benchmark modes, and path-shaped arguments such as `--request`.
+
+Examples:
+
+```text
+threadmoth ben<TAB>
+threadmoth benchmark --<TAB>
+threadmoth mutate --request <TAB>
+```
+
+### Better help and mistakes
+
+```text
+threadmoth --help
+threadmoth mutate --help
+threadmoth help mutate
+threadmoth help --find refusal
+```
+
+Misspelled commands and invalid enum values are handled by the CLI parser with suggestions rather than falling through to a generic “unknown command.”
+
+### Man page and doctor
+
+```text
+threadmoth manpage > threadmoth.1
+threadmoth doctor
+```
+
+`doctor` now reports runtime basics plus shell/PATH usability hints and the commands for generating completion and a man page.
 
 ## 60-second example
 
@@ -157,8 +221,10 @@ threadmoth preview --request request.json
 threadmoth mutate --request request.json
 threadmoth recover
 threadmoth benchmark
-threadmoth benchmark tough
-threadmoth torture
+threadmoth benchmark --tough
+threadmoth benchmark --torture
+threadmoth completions powershell
+threadmoth manpage
 ```
 
 Machine mutation output is JSON on stdout. Diagnostics stay on stderr.
