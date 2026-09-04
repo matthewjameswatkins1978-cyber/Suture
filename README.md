@@ -41,17 +41,24 @@ Threadmoth turns that final step into a narrow deterministic operation with expl
 
 ## It is also very quick
 
-Threadmoth ships with correctness-checked benchmark and torture commands. On one Windows x86_64 Threadmoth 1.2 tough-profile run:
+Threadmoth ships with correctness-checked benchmark and torture commands. In an observed Threadmoth 1.2 `tough`-profile run:
 
 | workload | average |
 |---|---:|
-| 21-byte file | **456 us** |
-| 30 KB config | **836 us** |
-| 1 MB text file | **7.57 ms** |
-| 5 MB text file | **37.3 ms** |
-| 32 MB text file | **252 ms** |
+| 21-byte file | **0.87 ms** |
+| 30 KB config | **1.33 ms** |
+| 1 MB text file | **14.3 ms** |
+| 5 MB text file | **55.7 ms** |
+| 32 MB text file | **291 ms** |
+| 2 MB / many lines | **29.0 ms** |
+| 2 MB / one long line | **17.1 ms** |
+| 250 tiny files | **5.25 ms total** |
 
-That run reported **zero wrong successful mutations** across the tough profile. These are local measurements rather than universal cross-platform claims, so the checked-in benchmark harness remains the source of truth. See the [benchmark report](docs/benchmark-report.md) and run it on your own machine:
+The run finished with **zero wrong successful mutations** across the entire tough profile.
+
+Put another way: Threadmoth can inspect, constrain, mutate, verify, and certify a 32 MB file in under a third of a second on this observed run, without reporting an incorrect successful mutation.
+
+These are local measurements rather than universal cross-platform claims, so the checked-in benchmark harness remains the source of truth. See the [benchmark report](docs/benchmark-report.md) and run it on your own machine:
 
 ```text
 threadmoth benchmark tough
