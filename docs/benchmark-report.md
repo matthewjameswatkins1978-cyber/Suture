@@ -17,7 +17,33 @@ The torture command runs deterministic apply/refusal/stale-identity/transaction-
 
 Results are environment-dependent. The checked-in harness is the reproducible evidence source; future runs should record machine, Rust version, and output rather than treating local numbers as universal claims.
 
-## Windows x86_64 run
+## Current observed Threadmoth 1.2 tough-profile run
+
+This run was supplied from a live `threadmoth benchmark tough` execution on 2026-09-04:
+
+| case | bytes | iterations | wrong applied | average |
+|---|---:|---:|---:|---:|
+| tiny | 21 | 100 | 0 | 866.7 us |
+| config_30k | 30,008 | 50 | 0 | 1,329.4 us |
+| text_1m | 1,000,008 | 25 | 0 | 14,263.7 us |
+| text_5m | 5,000,008 | 10 | 0 | 55,721.7 us |
+| text_32m | 32,000,008 | 3 | 0 | 290,643.4 us |
+| many_lines_2m | 1,999,992 | 10 | 0 | 28,951.9 us |
+| long_line_2m | 2,000,006 | 5 | 0 | 17,139.8 us |
+| small_files_250 | 2,500 total | 1 batch | 0 | 5,253.5 us |
+
+The run completed with:
+
+```text
+state: CHECKING wrong_successful_mutations=0
+state: PASS profile=tough
+```
+
+The important correctness result is **zero wrong successful mutations across the entire tough profile**.
+
+The timing result is also useful context: in this observed run, a 1 MB mutation completed in about 14.3 ms, 5 MB in about 55.7 ms, and 32 MB in about 291 ms. These are local measurements, not universal performance guarantees.
+
+## Earlier Windows x86_64 run
 
 The following was produced on 2026-09-03 with the release binary on this Windows x86_64 host:
 
@@ -41,9 +67,9 @@ The pass-1 branch was rerun on 2026-09-04 with the same checked-in harness after
 
 The timings are a single Windows run and are not a before/after claim; the certificate sizes differ from the earlier run because the branch includes later protocol/runtime changes. The safety signal remains zero incorrect successful mutations.
 
-## Threadmoth 1.2 tough-profile run
+## Earlier Threadmoth 1.2 tough-profile run
 
-The release command was run on 2026-09-04 on this Windows x86_64 host against the Threadmoth 1.2 release candidate:
+An earlier release-candidate command was run on 2026-09-04 on a Windows x86_64 host:
 
 | case | bytes | iterations | wrong applied | average |
 |---|---:|---:|---:|---:|
@@ -56,4 +82,4 @@ The release command was run on 2026-09-04 on this Windows x86_64 host against th
 | long_line_2m | 2,000,006 | 5 | 0 | 16,046.4 us |
 | small_files_250 | 2,500 total | 250 | 0 | 2,580.8 us |
 
-These are local measurements, not universal performance claims. The important correctness result is zero wrong successful mutations across the tough profile.
+These earlier measurements are retained for history, but the README now uses the current observed tough-profile run above.
