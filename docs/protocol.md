@@ -10,8 +10,12 @@ The operation is encoded as an outer provider and nested tagged operation:
 
 Text supports exact and idempotent desired-state operations. JSON/JSONC support source-preserving structured paths; TOML supports dotted paths; YAML, Markdown, dotenv, bounded pattern, strict unified diff, filesystem lifecycle, and Tree-sitter code providers are separate explicit providers. Structured paths require `exactly_one`; broad operations must state their cardinality.
 
+`filesystem` is the canonical lifecycle-provider spelling in Threadmoth 1.3.1 discovery, schema output, certificates, and newly generated requests. The older request spelling `file` remains accepted as a compatibility alias and is canonicalized to `filesystem` when Threadmoth serializes it.
+
 Outcomes are `APPLIED`, `NO_CHANGE`, `REFUSED`, and `FAILED`. Refusals include stable reasons such as `stale_identity`, `cardinality_mismatch`, `cardinality_ambiguous`, `unsupported_encoding`, `malformed_input`, `workspace_traversal`, `symlink_escape`, `preservation_unavailable`, and `unsupported_protocol_version`.
 
 An applied certificate includes protocol/provider identity, request ID, expected and observed cardinality, pre/post SHA-256, changed byte/line ranges, bounded diff, structural validation, preservation facts, effect-budget usage, commit guarantee, and recovery state. Diff output is capped at 4096 characters. Transaction certificates contain one certificate per member and one rollback/recovery state.
 
 Every refusal and relevant failure certificate includes a stable `reason_code`; use `threadmoth explain REASON_CODE` for local recovery guidance or `threadmoth suggest --from-refusal CERTIFICATE` for deterministic next request skeletons. Exit codes: `0` applied/no-change, `2` refused, `3` runtime failure.
+
+The full JSON certificate remains the default mutation output. Humans can add `--summary` to `preview`, `mutate`, or `transact` for a compact view of outcome, effect, preservation, hashes, and budget status. When a numeric effect budget is too small, that summary reports the exact minimum values implied by the prepared plan without modifying the request.
