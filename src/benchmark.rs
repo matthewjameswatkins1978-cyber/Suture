@@ -1,4 +1,5 @@
 use crate::pipeline::execute_request;
+use crate::presentation::{human_bytes, human_duration_us, rule};
 use crate::protocol::{
     Cardinality, EffectBudget, OperationPayload, Outcome, Request, PROTOCOL_VERSION,
 };
@@ -218,6 +219,44 @@ fn run_small_files(workspace: &Workspace, root: &std::path::Path) -> CaseResult 
     }
 }
 
+fn print_human_report(report: &Report) {
+    println!("THREADMOTH BENCHMARK");
+    println!("{}", rule());
+    println!("Profile     {}", report.profile);
+    println!("Version     {}", env!("CARGO_PKG_VERSION"));
+    println!("Mode        dry-run + correctness checked");
+    println!();
+    println!(
+        "{:<20} {:>10} {:>7} {:>12} {:>7} {:>8}",
+        "Case", "Size", "Runs", "Average", "Wrong", "Result"
+    );
+    println!("{}", rule());
+    for result in &report.cases {
+        println!(
+            "{:<20} {:>10} {:>7} {:>12} {:>7} {:>8}",
+            result.name,
+            human_bytes(result.bytes),
+            result.iterations,
+            human_duration_us(result.average_us),
+            result.wrong_applied,
+            result.state,
+        );
+    }
+    println!("{}", rule());
+    let passed = report
+        .cases
+        .iter()
+        .filter(|result| result.state == "PASS")
+        .count();
+    println!(
+        "{}  {}/{} cases · {} wrong mutations · correctness checked",
+        report.state,
+        passed,
+        report.cases.len(),
+        report.wrong_applied,
+    );
+}
+
 pub fn run(profile: Profile, json: bool) -> i32 {
     let root = match TempRoot::new("benchmark") {
         Ok(root) => root,
@@ -233,33 +272,13 @@ pub fn run(profile: Profile, json: bool) -> i32 {
             return 3;
         }
     };
-    if !json {
-        println!("THREADMOTH BENCHMARK");
-        println!(
-            "state: PLANNING profile={} (dry-run, correctness checked)",
-            profile.name()
-        );
-        println!("state: WARMING_UP");
-    }
     let mut results = Vec::new();
     for case in profile.cases() {
-        if !json {
-            println!(
-                "state: RUNNING case={} iterations={}",
-                case.name, case.iterations
-            );
-        }
         let result = if case.name == "small_files_250" {
             run_small_files(&workspace, &root.0)
         } else {
             run_case(&workspace, &root.0, &case)
         };
-        if !json {
-            println!(
-                "state: {} case={} bytes={} avg_us={:.1} wrong={}",
-                result.state, result.name, result.bytes, result.average_us, result.wrong_applied
-            );
-        }
         results.push(result);
     }
     let wrong_applied = results.iter().map(|result| result.wrong_applied).sum();
@@ -274,8 +293,25 @@ pub fn run(profile: Profile, json: bool) -> i32 {
     if json {
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else {
-        println!("state: CHECKING wrong_successful_mutations={wrong_applied}");
-        println!("state: {state} profile={}", profile.name());
+        print_human_report(&report);
     }
     i32::from(wrong_applied != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_profile_still_has_three_cases() {
+        assert_eq!(Profile::Quick.cases().len(), 3);
+    }
+
+    #[test]
+    fn profile_parser_keeps_legacy_values() {
+        assert_eq!(Profile::parse("quick"), Some(Profile::Quick));
+        assert_eq!(Profile::parse("standard"), Some(Profile::Standard));
+        assert_eq!(Profile::parse("tough"), Some(Profile::Tough));
+        assert_eq!(Profile::parse("unknown"), None);
+    }
 }
