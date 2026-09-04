@@ -6,7 +6,8 @@ use threadmoth::{
     metadata,
     pipeline::execute_request,
     protocol::{
-        DesiredStateOperation, EffectBudget, OperationPayload, Outcome, Request, PROTOCOL_VERSION,
+        DesiredStateOperation, EffectBudget, OperationPayload, Outcome, Request,
+        TransactionRequest, PROTOCOL_VERSION,
     },
     provider::web::WebOperation,
     recovery::{self, Journal, JournalEntry},
@@ -139,4 +140,40 @@ fn recovery_inspection_is_read_only_and_classifies_members() {
     let inspected = recovery::inspect(&workspace, "inspect-me");
     assert_eq!(inspected.members[0].classification, "CANDIDATE");
     assert_eq!(fs::read(temp.path().join("x.txt")).unwrap(), before);
+}
+
+#[test]
+fn oversized_transaction_journal_is_refused_before_commit() {
+    let temp = TempDir::new().unwrap();
+    let workspace = Workspace::new(temp.path()).unwrap();
+    let original = vec![b'a'; 2 * 1024 * 1024];
+    let mut desired = original.clone();
+    let final_byte = desired.len() - 1;
+    desired[final_byte] = b'b';
+    workspace.write_file_atomic("large.txt", &original).unwrap();
+
+    let transaction = TransactionRequest {
+        version: PROTOCOL_VERSION.into(),
+        transaction_id: "oversized-transaction".into(),
+        requests: vec![request(
+            "large.txt",
+            OperationPayload::DesiredState(DesiredStateOperation::Replace {
+                desired_bytes: desired,
+            }),
+        )],
+        budget: EffectBudget::default(),
+    };
+    let certificate = threadmoth::pipeline::execute_transaction(&workspace, &transaction, false);
+
+    assert_eq!(certificate.outcome, Outcome::Refused);
+    assert!(matches!(
+        certificate.refusal_reason,
+        Some(threadmoth::protocol::RefusalReason::ResourceLimitExceeded {
+            dimension,
+            limit,
+            actual,
+        }) if dimension == "max_journal_bytes" && limit == 8 * 1024 * 1024 && actual > limit
+    ));
+    assert_eq!(fs::read(temp.path().join("large.txt")).unwrap(), original);
+    assert!(!temp.path().join(".threadmoth-recovery").exists());
 }

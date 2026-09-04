@@ -685,13 +685,11 @@ pub fn execute_transaction(
             })
             .collect(),
     };
+    if let Err(error) = recovery::check_journal_size(&journal) {
+        return transaction_journal_error(transaction, error);
+    }
     if let Err(e) = recovery::write_journal(workspace, &journal) {
-        return transaction_failure(
-            transaction,
-            FailureReason::CommitFailure {
-                message: e.to_string(),
-            },
-        );
+        return transaction_journal_error(transaction, e);
     }
     let mut committed = Vec::new();
     for entry in &journal.entries {
@@ -1066,13 +1064,11 @@ fn execute_single_file_transaction(
             candidate: current,
         }],
     };
+    if let Err(error) = recovery::check_journal_size(&journal) {
+        return transaction_journal_error(transaction, error);
+    }
     if let Err(error) = recovery::write_journal(workspace, &journal) {
-        return transaction_failure(
-            transaction,
-            FailureReason::CommitFailure {
-                message: error.to_string(),
-            },
-        );
+        return transaction_journal_error(transaction, error);
     }
     match workspace.write_file_atomic_checked(
         &path,
@@ -1185,6 +1181,23 @@ fn transaction_failure(
         refusal_reason: None,
         failure_reason: Some(reason),
         reason_code: Some(reason_code),
+    }
+}
+
+fn transaction_journal_error(
+    transaction: &TransactionRequest,
+    error: WorkspaceError,
+) -> TransactionCertificate {
+    match error {
+        WorkspaceError::ResourceLimit { .. } => {
+            transaction_refusal(transaction, workspace_reason(error))
+        }
+        error => transaction_failure(
+            transaction,
+            FailureReason::CommitFailure {
+                message: error.to_string(),
+            },
+        ),
     }
 }
 

@@ -1,6 +1,6 @@
 # Protocol v1.1
 
-A request is JSON with `version: "1.1.0"`, a stable `request_id`, a workspace-relative `file_path`, optional `namespace`, optional `expected_pre_hash`, a `cardinality`, an optional hard effect `budget`, and an operation. Package version 1.5.0 does not imply a protocol bump. Run `threadmoth help`, `threadmoth examples`, `threadmoth schema`, `threadmoth explain`, `threadmoth suggest`, or `threadmoth capabilities` for local discovery. Unknown fields are rejected.
+A request is JSON with `version: "1.1.0"`, a stable `request_id`, a workspace-relative `file_path`, optional `namespace`, optional `expected_pre_hash`, a `cardinality`, an optional hard effect `budget`, and an operation. Package version 1.5.1 does not imply a protocol bump. Run `threadmoth help`, `threadmoth examples`, `threadmoth schema`, `threadmoth explain`, `threadmoth suggest`, or `threadmoth capabilities` for local discovery. Unknown fields are rejected.
 
 The operation is encoded as an outer provider and nested tagged operation:
 
@@ -12,7 +12,7 @@ Text supports exact and idempotent desired-state operations. JSON/JSONC support 
 
 The `desired_state` provider accepts exact desired bytes. Threadmoth derives strictly bounded deterministic edits, checks the in-memory candidate equals those bytes, and checks the post-commit readback has the same SHA-256. It does not execute formatters or claim semantic preservation percentages.
 
-`filesystem` is the canonical lifecycle-provider spelling in Threadmoth 1.5.0 discovery, schema output, certificates, and newly generated requests. The older request spelling `file` remains accepted as a compatibility alias and is canonicalized to `filesystem` when Threadmoth serializes it.
+`filesystem` is the canonical lifecycle-provider spelling in Threadmoth 1.5.1 discovery, schema output, certificates, and newly generated requests. The older request spelling `file` remains accepted as a compatibility alias and is canonicalized to `filesystem` when Threadmoth serializes it.
 
 Outcomes are `APPLIED`, `NO_CHANGE`, `REFUSED`, and `FAILED`. Refusals include stable reasons such as `stale_identity`, `cardinality_mismatch`, `cardinality_ambiguous`, `unsupported_encoding`, `malformed_input`, `workspace_traversal`, `symlink_escape`, `preservation_unavailable`, and `unsupported_protocol_version`.
 

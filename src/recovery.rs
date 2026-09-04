@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::engine::compute_sha256;
+use crate::protocol::PROTOCOL_VERSION;
 use crate::workspace::{Workspace, WorkspaceError};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -8,7 +9,7 @@ use std::io;
 
 const RECOVERY_DIR: &str = ".threadmoth-recovery";
 const LEGACY_RECOVERY_DIR: &str = ".suture-recovery";
-const MAX_JOURNAL_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_JOURNAL_BYTES: usize = 8 * 1024 * 1024;
 const MAX_JOURNAL_ENTRIES: usize = 256;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -27,12 +28,28 @@ pub struct JournalEntry {
     pub candidate: Vec<u8>,
 }
 
+fn serialize_journal(journal: &Journal) -> Result<Vec<u8>, WorkspaceError> {
+    let bytes = serde_json::to_vec_pretty(journal)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    if bytes.len() > MAX_JOURNAL_BYTES {
+        return Err(WorkspaceError::ResourceLimit {
+            dimension: "max_journal_bytes".into(),
+            limit: MAX_JOURNAL_BYTES,
+            actual: bytes.len(),
+        });
+    }
+    Ok(bytes)
+}
+
+pub(crate) fn check_journal_size(journal: &Journal) -> Result<(), WorkspaceError> {
+    serialize_journal(journal).map(|_| ())
+}
+
 pub fn write_journal(workspace: &Workspace, journal: &Journal) -> Result<(), WorkspaceError> {
+    let bytes = serialize_journal(journal)?;
     let dir = workspace.root().join(RECOVERY_DIR);
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.json", safe_id(&journal.transaction_id)));
-    let bytes = serde_json::to_vec_pretty(journal)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -339,7 +356,7 @@ fn validate_journal(workspace: &Workspace, path: &std::path::Path) -> Result<Jou
     }
     let journal: Journal =
         serde_json::from_slice(&bytes).map_err(|error| format!("invalid JSON: {error}"))?;
-    if journal.protocol_version != "1.1.0" {
+    if journal.protocol_version != PROTOCOL_VERSION {
         return Err("unsupported journal protocol version".into());
     }
     if journal.transaction_id.is_empty()
@@ -579,5 +596,33 @@ mod tests {
         assert_eq!(report.cleaned, 1);
         assert!(!legacy.exists());
         assert_eq!(workspace.read_file("x.txt").unwrap(), b"new");
+    }
+
+    #[test]
+    fn oversized_journal_is_refused_before_creating_recovery_state() {
+        let temp = TempDir::new().unwrap();
+        let workspace = Workspace::new(temp.path()).unwrap();
+        let payload = vec![b'a'; 2 * 1024 * 1024];
+        let error = write_journal(
+            &workspace,
+            &Journal {
+                protocol_version: PROTOCOL_VERSION.into(),
+                transaction_id: "oversized".into(),
+                entries: vec![entry("x.txt", &payload, &payload)],
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            WorkspaceError::ResourceLimit {
+                dimension,
+                limit,
+                actual,
+            } if dimension == "max_journal_bytes"
+                && limit == MAX_JOURNAL_BYTES
+                && actual > limit
+        ));
+        assert!(!temp.path().join(RECOVERY_DIR).exists());
     }
 }
