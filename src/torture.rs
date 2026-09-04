@@ -253,12 +253,16 @@ fn run_footgun_100(
 }
 
 fn symlink_case(workspace: &Workspace, root: &Path, results: &mut Vec<CaseResult>) -> usize {
-    let outside = root.join("outside");
+    let outside = root.with_file_name(format!(
+        "{}-outside",
+        root.file_name().unwrap().to_string_lossy()
+    ));
     fs::create_dir_all(&outside).unwrap();
     fs::write(outside.join("sentinel.txt"), b"OUTSIDE-SENTINEL\n").unwrap();
     let link = root.join("link-escape.txt");
     let made = symlink_file(&outside.join("sentinel.txt"), &link);
     if !made {
+        let _ = fs::remove_dir_all(&outside);
         add(
             results,
             "symlink escape",
@@ -280,6 +284,7 @@ fn symlink_case(workspace: &Workspace, root: &Path, results: &mut Vec<CaseResult
     );
     let pass = certificate.outcome == Outcome::Refused
         && fs::read(outside.join("sentinel.txt")).unwrap() == b"OUTSIDE-SENTINEL\n";
+    let _ = fs::remove_dir_all(&outside);
     add(
         results,
         "symlink escape",
