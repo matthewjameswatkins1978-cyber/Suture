@@ -43,6 +43,38 @@ Threadmoth turns that final step into a narrow deterministic operation with expl
 - **Auditable**: `APPLIED` includes hashes, changed byte ranges, bounded diff evidence, and commit evidence.
 - **Contained**: workspace boundaries, traversal checks, symlink containment, staged writes, stale-read protection, and recovery state.
 
+## What does Threadmoth replace?
+
+Threadmoth is designed to replace the **improvised last-mile editing toolbox** AI coding agents commonly assemble from `sed`, regex replacement, `apply_patch`, one-off Python/Node scripts, direct file writes, format-specific editors, and AST tooling.
+
+Those tools are useful. The problem is that an autonomous agent can choose a different mutation path for every task, each with different ambiguity handling, stale-state behaviour, preservation rules, failure modes, and evidence.
+
+A useful mental model is:
+
+```text
+sed
++ regex
++ apply_patch
++ jq/yq-style structural editing
++ one-off editing scripts
++ Tree-sitter targeting
++ guarded file operations
++ deterministic diff planning
++ transaction recovery
+
+            becomes
+
+        one Threadmoth boundary
+```
+
+Threadmoth does **not** try to make specialist tools obsolete. Formatters such as `rustfmt`, Prettier, Black, and `gofmt` can still decide the desired state. Threadmoth can then enforce effect budgets, stale-state checks, containment, verification, and certification before that state lands.
+
+The goal is not “never use `sed`, `jq`, Prettier, or `rustfmt` again.”
+
+The goal is **do not make the AI agent itself responsible for deciding whether its file mutation was safe.**
+
+Read the full comparison: [What Threadmoth replaces](docs/what-threadmoth-replaces.md).
+
 ## It is also very quick
 
 Threadmoth ships with correctness-checked benchmark and torture modes. In an observed Threadmoth 1.2 `tough`-profile run:
@@ -313,6 +345,7 @@ The v1.1 protocol supports UTF-8, UTF-8 BOM, LF, CRLF, and either final-newline 
 ## Documentation
 
 - [Documentation index](docs/README.md)
+- [What Threadmoth replaces](docs/what-threadmoth-replaces.md)
 - [Architecture](docs/architecture.md)
 - [Protocol](docs/protocol.md)
 - [CLI](docs/cli.md)
