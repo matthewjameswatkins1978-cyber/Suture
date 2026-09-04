@@ -1,6 +1,6 @@
 # Threadmoth CLI
 
-Threadmoth 1.5.0 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
+Threadmoth 1.5.1 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
 
 ## Benchmark commands
 
@@ -77,7 +77,7 @@ The summary shows the outcome, provider, effect size, budget result, newline/pre
 }
 ```
 
-Threadmoth 1.5.0 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
+Threadmoth 1.5.1 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
 
 ## Shell completion
 
@@ -179,4 +179,4 @@ threadmoth doctor
 
 ## Compatibility policy
 
-Threadmoth 1.5.0 keeps the important pre-1.3 spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. They are not the preferred documentation surface, but existing agent scripts do not need an immediate flag-day migration.
+Threadmoth 1.5.1 keeps the important pre-1.3 spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. They are not the preferred documentation surface, but existing agent scripts do not need an immediate flag-day migration.

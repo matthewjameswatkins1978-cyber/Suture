@@ -1,6 +1,6 @@
 [package]
 name = "threadmoth"
-version = "1.5.0"
+version = "1.5.1"
 edition = "2021"
 rust-version = "1.85"
 default-run = "threadmoth"
@@ -15,10 +15,6 @@ categories = ["command-line-utilities", "config"]
 [[bin]]
 name = "threadmoth"
 path = "src/threadmoth_cli.rs"
-
-[[bin]]
-name = "suture"
-path = "src/main.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
