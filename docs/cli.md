@@ -1,0 +1,133 @@
+# Threadmoth CLI
+
+Threadmoth 1.3 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
+
+## Benchmark commands
+
+The canonical benchmark surface is:
+
+```text
+threadmoth benchmark
+threadmoth benchmark --quick
+threadmoth benchmark --tough
+threadmoth benchmark --torture
+```
+
+Short forms:
+
+```text
+threadmoth benchmark -q
+threadmoth benchmark -t
+threadmoth benchmark -x
+```
+
+Add `--json` (or `-j`) for machine-readable output.
+
+For compatibility, Threadmoth 1.3 still accepts:
+
+```text
+threadmoth benchmark tough
+threadmoth torture
+```
+
+New documentation and automation should prefer the canonical flag forms.
+
+## Shell completion
+
+Threadmoth generates completion from the same CLI grammar used to parse commands:
+
+```text
+threadmoth completions powershell
+threadmoth completions bash
+threadmoth completions zsh
+threadmoth completions fish
+```
+
+The generated script should be installed using the normal mechanism for the target shell. Threadmoth deliberately prints completion rather than silently rewriting shell startup files.
+
+### PowerShell
+
+For the current session:
+
+```powershell
+threadmoth completions powershell | Out-String | Invoke-Expression
+```
+
+For a persistent setup, save the generated completion script somewhere stable and source it from your PowerShell profile.
+
+### Bash
+
+For the current session:
+
+```bash
+source <(threadmoth completions bash)
+```
+
+For a persistent setup, save the output in your normal Bash completion directory or source it from your shell configuration.
+
+### zsh
+
+Generate the zsh completion file and place it in a directory on `fpath`, then refresh completion with `compinit`.
+
+### fish
+
+Save the output as `threadmoth.fish` in your normal fish completions directory.
+
+## Help
+
+All subcommands support generated help:
+
+```text
+threadmoth --help
+threadmoth mutate --help
+threadmoth benchmark --help
+```
+
+The existing Threadmoth help-search surface remains available:
+
+```text
+threadmoth help mutate
+threadmoth help --find refusal
+```
+
+Because command names, flags and enumerated values are parsed by `clap`, invalid input gets structured usage errors and close-match suggestions instead of a generic unknown-command fallback.
+
+## Path-aware arguments
+
+Arguments that represent files are marked as path values in the command grammar. Completion systems can therefore offer filesystem candidates for commands such as:
+
+```text
+threadmoth mutate --request <TAB>
+threadmoth preview --request <TAB>
+threadmoth suggest <TAB>
+threadmoth inspect <TAB>
+threadmoth capabilities --for <TAB>
+```
+
+## Man page
+
+Generate the main roff man page:
+
+```text
+threadmoth manpage > threadmoth.1
+```
+
+Or write it directly:
+
+```text
+threadmoth manpage --output threadmoth.1
+```
+
+Packaging systems can install that file into the platform's normal manpage location.
+
+## Doctor
+
+`threadmoth doctor` reports core runtime information plus CLI usability hints including detected shell, whether the running executable directory appears on `PATH`, and the available completion/manpage commands.
+
+```text
+threadmoth doctor
+```
+
+## Compatibility policy
+
+Threadmoth 1.3 keeps the important pre-1.3 spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, and `transaction-preview`. They are not the preferred documentation surface, but existing agent scripts do not need an immediate flag-day migration.
