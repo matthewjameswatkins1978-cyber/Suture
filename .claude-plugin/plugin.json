@@ -1,0 +1,11 @@
+{
+  "name": "threadmoth",
+  "description": "A bounded, source-preserving file mutation skill for Claude Code.",
+  "version": "1.5.1",
+  "author": {
+    "name": "Matthew Watkins"
+  },
+  "homepage": "https://github.com/matthewjameswatkins1978-cyber/Suture",
+  "repository": "https://github.com/matthewjameswatkins1978-cyber/Suture",
+  "license": "MIT"
+}

@@ -16,6 +16,7 @@ Threadmoth is a fast, deterministic structural search-and-rewrite runtime for AI
 | [v1.1 discovery](v1.1-discovery.md) | Capability/schema discovery behaviour |
 | [Syntax targeting](syntax-targeting.md) | AST-grounded versus AST-typed source-preserving edits |
 | [Desired state](desired-state.md) | Deterministic desired-state planning and verification |
+| [Distribution ledger](distribution-ledger.md) | Shipped agent integrations, outreach status, metrics, and next gates |
 
 ## Core idea
 
