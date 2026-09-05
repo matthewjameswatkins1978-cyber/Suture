@@ -17,6 +17,10 @@ Do not bypass a Threadmoth refusal with a broader raw edit unless the user expli
 
 That is intentionally small. The point is to test Threadmoth's discovery surfaces rather than preload the model with its protocol.
 
+## Antigravity
+
+The repository root contains a native Antigravity [`plugin.json`](../plugin.json) that packages the existing `skills/threadmoth/SKILL.md` without duplicating its instruction text. Install it with `agy plugin install <repository>`. Antigravity 1.1.27 authentication and skill discovery were verified locally. In a disposable fixture, a neutral mutation request led the agent to invoke `threadmoth preview`, which returned the real `TARGET_AMBIGUOUS` refusal with no file change; the follow-up recovery wandered into unsupported provider exploration and did not complete `mutate`, so Antigravity is not yet live-verified end-to-end.
+
 ## Useful discovery commands
 
 ```text

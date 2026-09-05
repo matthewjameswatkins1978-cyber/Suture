@@ -11,6 +11,7 @@ Use any coding agents you have access to. Suggested set:
 - Codex
 - Claude Code
 - Gemini CLI
+- Antigravity
 - Cline
 - OpenCode
 

@@ -344,6 +344,8 @@ handling, and certificate preservation; they do not install or replace the
 `threadmoth` executable. See [agent integration](docs/agent-integration.md) and
 the [distribution ledger](docs/distribution-ledger.md).
 
+Antigravity also has a native [`plugin.json`](plugin.json) manifest and reuses the same Agent Skill. Install it with `agy plugin install <repository>`. Local testing confirmed Antigravity authentication and skill discovery; the end-to-end mutation/refusal/recovery sequence remains pending until the agent completes a safe Threadmoth mutation.
+
 ## Safety model
 
 Threadmoth is intentionally narrow. It mutates files. It does **not** execute Git, builds, tests, formatters, arbitrary subprocesses, or network operations.
