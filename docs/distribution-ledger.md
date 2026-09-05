@@ -17,9 +17,10 @@ The earlier adoption snapshot reported 0 stars, 0 forks, and 0 watchers, with re
 
 | Target | Artifact | Status | Validation |
 |---|---|---|---|
-| Portable Agent Skills | [`skills/threadmoth/SKILL.md`](../skills/threadmoth/SKILL.md) | Shipped | Agent Skills frontmatter and progressive-disclosure requirements checked |
-| Claude Code | [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) plus the shared skill | Shipped | Standard plugin layout and manifest shape checked against Claude Code docs |
-| Gemini CLI | [`gemini-extension.json`](../gemini-extension.json), [`GEMINI.md`](../GEMINI.md), shared skill | Shipped | Root manifest, context file, and bundled skill layout checked against Gemini CLI docs |
+  | Portable Agent Skills | [`skills/threadmoth/SKILL.md`](../skills/threadmoth/SKILL.md) | Shipped | Agent Skills frontmatter and progressive-disclosure requirements checked |
+  | Claude Code | [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) plus the shared skill | Shipped | Standard plugin layout and manifest shape checked against Claude Code docs |
+  | Gemini CLI | [`gemini-extension.json`](../gemini-extension.json), [`GEMINI.md`](../GEMINI.md), shared skill | Shipped | Root manifest, context file, and bundled skill layout checked against Gemini CLI docs |
+  | Antigravity | [`plugin.json`](../plugin.json) plus the shared skill | Packaged; discovery and authentication verified; live mutation pending | `agy 1.1.27`; Google OAuth authenticated as `easyennui@gmail.com`; agent loaded the skill and selected Threadmoth, but the run entered unsafe Git investigation; the destructive action was refused. Test A changed only the requested `app.json` value, but tool provenance is inconclusive; refusal/recovery Test B is pending and Antigravity is not live-verified |
 
 All adapters require the user-installed `threadmoth` executable on PATH. They do not install a binary, start an MCP server, grant permissions, or silently replace other editing tools.
 

@@ -369,6 +369,18 @@ Exit codes are:
 
 This makes Threadmoth easy to drop into agent loops, scripts, orchestration systems, and toolbelts without scraping prose.
 
+  ### Portable agent integrations
+
+Threadmoth also ships a portable [Agent Skill](skills/threadmoth/SKILL.md) for
+agents that support the open `SKILL.md` format. The same skill is bundled as a
+minimal Claude Code plugin and Gemini CLI extension in this repository. These
+adapters teach discovery, bounded requests, preview-first operation, refusal
+handling, and certificate preservation; they do not install or replace the
+`threadmoth` executable. See [agent integration](docs/agent-integration.md) and
+the [distribution ledger](docs/distribution-ledger.md).
+
+Antigravity also has a native [`plugin.json`](plugin.json) manifest and reuses the same Agent Skill. Install it with `agy plugin install <repository>`. Local testing confirmed Antigravity authentication and skill discovery; the end-to-end mutation/refusal/recovery sequence remains pending until the agent completes a safe Threadmoth mutation.
+
 ## Safety model
 
 Threadmoth is intentionally narrow. It mutates files. It does **not** execute Git, builds, tests, formatters, arbitrary subprocesses, or network operations.
