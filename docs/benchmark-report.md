@@ -20,9 +20,9 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Add `--json` for machine-readable output. The tough profile adds 5 MiB and 32 MiB files, a two-million-byte long-line case, a many-line case, and 250 repeated small-file checks. Every benchmark checks correctness and exits non-zero if an expected successful mutation is wrong.
+Add `--json` for machine-readable output. The tough profile adds 5 MiB and 32 MiB files, a two-million-byte long-line refinement case, a many-line case, and 250 repeated small-file checks. The long-line refinement case uses desired-state planning to exercise prefix/suffix trimming and the bounded byte-refinement fallback. Every benchmark checks correctness and exits non-zero if an expected successful mutation is wrong.
 
-Threadmoth 1.3.1 gives benchmark and torture runs a compact human presentation while preserving the existing structured `--json` report for scripts and agents. A human benchmark now ends with a one-line release signal such as:
+Threadmoth 1.6.0 gives benchmark and torture runs a compact human presentation while preserving the existing structured `--json` report for scripts and agents. A human benchmark now ends with a one-line release signal such as:
 
 ```text
 PASS  8/8 cases · 0 wrong mutations · correctness checked

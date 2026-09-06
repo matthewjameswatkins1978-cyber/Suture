@@ -1,4 +1,5 @@
 use schemars::schema_for;
+use serde_json::{json, Value};
 use std::{
     env,
     io::{self, BufRead},
@@ -49,65 +50,136 @@ pub fn run_mcp() {
                 break;
             }
         };
-        let request: serde_json::Value = match serde_json::from_str(&line) {
+        let request: Value = match serde_json::from_str(&line) {
             Ok(x) => x,
-            Err(_) => continue,
-        };
-        let id = request
-            .get("id")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let result = match request.get("method").and_then(|x| x.as_str()).unwrap_or("") {
-            "initialize" => {
-                serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "threadmoth", "version": THREADMOTH_VERSION, "protocol_version": PROTOCOL_VERSION}})
+            Err(error) => {
+                println!("{}", json_rpc_error(Value::Null, -32700, error.to_string()));
+                continue;
             }
-            "tools/list" => serde_json::json!({"tools": [
-                {"name": "threadmoth_mutate", "description": "Apply one typed Threadmoth mutation and return its certificate", "inputSchema": schema_for!(Request)},
-                {"name": "threadmoth_capabilities", "description": "Return Threadmoth capabilities", "inputSchema": {"type": "object"}},
-                {"name": "threadmoth_transact", "description": "Prepare and commit a guarded transaction", "inputSchema": schema_for!(TransactionRequest)}
-            ]}),
-            "tools/call" => {
-                let params = request.get("params").cloned().unwrap_or_default();
-                let name = params.get("name").and_then(|x| x.as_str()).unwrap_or("");
-                let arguments = params.get("arguments").cloned().unwrap_or_default();
-                let value = match name {
-                    "threadmoth_capabilities" | "suture_capabilities" => {
-                        Ok(serde_json::to_value(threadmoth::capabilities::current()).unwrap())
-                    }
-                    "threadmoth_mutate" | "suture_mutate" => {
-                        serde_json::from_value::<Request>(arguments).map(|r| {
-                            serde_json::to_value(execute_request(&workspace, &r, false)).unwrap()
-                        })
-                    }
-                    "threadmoth_transact" | "suture_transact" => {
-                        serde_json::from_value::<TransactionRequest>(arguments).map(|r| {
-                            serde_json::to_value(threadmoth::pipeline::execute_transaction(
-                                &workspace, &r, false,
-                            ))
-                            .unwrap()
-                        })
-                    }
-                    _ => Err(serde_json::Error::io(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        "unknown Threadmoth tool",
-                    ))),
-                };
-                match value {
-                    Ok(value) => {
-                        serde_json::json!({"content": [{"type": "text", "text": serde_json::to_string(&value).unwrap()}], "structuredContent": value})
-                    }
-                    Err(e) => {
-                        serde_json::json!({"isError": true, "content": [{"type": "text", "text": e.to_string()}]})
-                    }
-                }
-            }
-            _ => serde_json::json!({}),
         };
-        println!(
-            "{}",
-            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})
-        );
+        if let Some(response) = handle_mcp_message(&workspace, request) {
+            println!("{}", response);
+        }
     }
+}
+
+fn handle_mcp_message(workspace: &Workspace, request: Value) -> Option<Value> {
+    let Some(object) = request.as_object() else {
+        return Some(json_rpc_error(
+            Value::Null,
+            -32600,
+            "invalid JSON-RPC request".into(),
+        ));
+    };
+    let notification = !object.contains_key("id");
+    let id = object.get("id").cloned().unwrap_or(Value::Null);
+    let body = if object.get("jsonrpc") != Some(&Value::String("2.0".into())) {
+        json_rpc_error(id.clone(), -32600, "invalid JSON-RPC request".into())
+    } else {
+        match object.get("method").and_then(Value::as_str) {
+            Some("initialize") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "threadmoth", "version": THREADMOTH_VERSION, "protocol_version": PROTOCOL_VERSION}}
+            }),
+            Some("tools/list") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {"tools": [
+                    {"name": "threadmoth_mutate", "description": "Apply one typed Threadmoth mutation and return its certificate", "inputSchema": schema_for!(Request)},
+                    {"name": "threadmoth_preview", "description": "Preview one typed Threadmoth mutation without writing", "inputSchema": schema_for!(Request)},
+                    {"name": "threadmoth_capabilities", "description": "Return Threadmoth capabilities", "inputSchema": {"type": "object"}},
+                    {"name": "threadmoth_transact", "description": "Prepare and commit a guarded transaction", "inputSchema": schema_for!(TransactionRequest)}
+                ]}
+            }),
+            Some("tools/call") => {
+                let Some(params) = object.get("params").and_then(Value::as_object) else {
+                    return if notification {
+                        None
+                    } else {
+                        Some(json_rpc_error(
+                            id,
+                            -32602,
+                            "tools/call params must be an object".into(),
+                        ))
+                    };
+                };
+                let Some(name) = params.get("name").and_then(Value::as_str) else {
+                    return if notification {
+                        None
+                    } else {
+                        Some(json_rpc_error(
+                            id,
+                            -32602,
+                            "tools/call requires a tool name".into(),
+                        ))
+                    };
+                };
+                let arguments = params
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                let value = call_tool(workspace, name, arguments);
+                let result = match value {
+                    Ok(value) => {
+                        json!({"content": [{"type": "text", "text": serde_json::to_string(&value).unwrap()}], "structuredContent": value})
+                    }
+                    Err(error) => {
+                        json!({"isError": true, "content": [{"type": "text", "text": error}]})
+                    }
+                };
+                json!({"jsonrpc": "2.0", "id": id, "result": result})
+            }
+            Some(_) => json_rpc_error(id, -32601, "method not found".into()),
+            None => json_rpc_error(id, -32600, "method is required".into()),
+        }
+    };
+    if notification {
+        None
+    } else {
+        Some(body)
+    }
+}
+
+fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Value, String> {
+    match name {
+        "threadmoth_capabilities" | "suture_capabilities" => {
+            serde_json::to_value(threadmoth::capabilities::current()).map_err(|e| e.to_string())
+        }
+        "threadmoth_mutate" | "suture_mutate" => {
+            let request =
+                serde_json::from_value::<Request>(arguments).map_err(|e| e.to_string())?;
+            Ok(
+                serde_json::to_value(execute_request(workspace, &request, false))
+                    .map_err(|e| e.to_string())?,
+            )
+        }
+        "threadmoth_preview" | "suture_preview" => {
+            let request =
+                serde_json::from_value::<Request>(arguments).map_err(|e| e.to_string())?;
+            Ok(
+                serde_json::to_value(execute_request(workspace, &request, true))
+                    .map_err(|e| e.to_string())?,
+            )
+        }
+        "threadmoth_transact" | "suture_transact" => {
+            let transaction = serde_json::from_value::<TransactionRequest>(arguments)
+                .map_err(|e| e.to_string())?;
+            Ok(
+                serde_json::to_value(threadmoth::pipeline::execute_transaction(
+                    workspace,
+                    &transaction,
+                    false,
+                ))
+                .map_err(|e| e.to_string())?,
+            )
+        }
+        _ => Err("unknown Threadmoth tool".into()),
+    }
+}
+
+fn json_rpc_error(id: Value, code: i32, message: String) -> Value {
+    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
 fn read_mcp_line(reader: &mut impl BufRead) -> io::Result<Option<Result<String, usize>>> {

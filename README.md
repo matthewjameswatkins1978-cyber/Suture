@@ -14,7 +14,7 @@ Threadmoth is a small Rust runtime for **safe, source-preserving file mutation**
 
 > The parser gets to point at the cloth. It doesn’t get to re-weave it.
 
-Threadmoth 1.5 adds statically compiled code and web grammars behind one shared syntax engine, plus a language-neutral desired-state planner. Providers and planners propose `Vec<ByteEdit>`; Core alone guards, applies, verifies, and certifies them.
+Threadmoth 1.6 is a focused hardening release over the shared syntax engine and language-neutral desired-state planner. Providers and planners propose `Vec<ByteEdit>`; Core alone guards, applies, verifies, and certifies them.
 
 It can target text, structured data, configuration files, Markdown, dotenv files, regex patterns, syntax-aware code operations, strict patches, and guarded file lifecycle operations while preserving unrelated bytes. Every successful mutation is checked, committed through one controlled core, and returned with evidence describing what was observed and what actually changed.
 
@@ -101,7 +101,7 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Threadmoth 1.5.1 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
+Threadmoth 1.6.0 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
 
 ```text
 PASS  8/8 cases · 0 wrong mutations · correctness checked
@@ -270,7 +270,7 @@ Threadmoth currently supports:
 
 Providers propose candidates. **Core alone commits them.**
 
-`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.5.1 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
+`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.6.0 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
 
 ## Real-world dogfood: Lantern Keeper
 
@@ -309,7 +309,7 @@ threadmoth capabilities
 threadmoth schema
 threadmoth examples
 threadmoth suggest PATH
-threadmoth preview --request request.json
+  threadmoth preview --request request.json
 threadmoth mutate --request request.json
 threadmoth recover
 threadmoth recover --list
