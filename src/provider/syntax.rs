@@ -280,6 +280,10 @@ pub fn plan(
         node_kind,
         &mut found,
     );
+    if node_kind.is_none() {
+        found.sort_unstable_by_key(|(start, end, _)| (*start, *end));
+        found.dedup_by_key(|(start, end, _)| (*start, *end));
+    }
     if found.len() != 1 {
         return Err(SyntaxError::Refused(if found.is_empty() {
             RefusalReason::MissingTarget {
@@ -446,6 +450,51 @@ mod tests {
             validate_registry(&ambiguous_extension),
             Err("ambiguous extension")
         );
+    }
+
+    #[test]
+    fn python_same_span_wrappers_are_one_physical_candidate() {
+        let plan = plan(
+            b"value = 1\n",
+            "python",
+            "value = 1",
+            b"value = 2",
+            Placement::Replace,
+            None,
+            LanguageFamily::Code,
+            &Cardinality::ExactlyOne,
+        )
+        .expect("same source span must not be false ambiguity");
+
+        assert_eq!(plan.edits.len(), 1);
+        assert_eq!(plan.edits[0].start, 0);
+        assert_eq!(plan.edits[0].end, 9);
+    }
+
+    #[test]
+    fn distinct_identical_python_targets_remain_ambiguous() {
+        let error = plan(
+            b"value = 1\nvalue = 1\n",
+            "python",
+            "value = 1",
+            b"value = 2",
+            Placement::Replace,
+            None,
+            LanguageFamily::Code,
+            &Cardinality::ExactlyOne,
+        )
+        .unwrap_err();
+
+        match error {
+            SyntaxError::Refused(RefusalReason::DuplicateTarget {
+                count, candidates, ..
+            }) => {
+                assert_eq!(count, 2);
+                assert_eq!(candidates.len(), 2);
+                assert_ne!(candidates[0].offset, candidates[1].offset);
+            }
+            other => panic!("expected real ambiguity, got {other:?}"),
+        }
     }
 
     #[test]

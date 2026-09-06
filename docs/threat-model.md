@@ -1,6 +1,6 @@
 # Threat model
 
-Threadmoth 1.5 keeps the parser deliberately subordinate: it points at source bytes and validates candidates; it does not regenerate or reformat source.
+Threadmoth 1.6 keeps the parser deliberately subordinate: it points at source bytes and validates candidates; it does not regenerate or reformat source.
 
 Threadmoth assumes the caller may have stale context and the target file may be concurrently modified. The optional expected hash rejects stale observations; Core also hashes the file again immediately before staging. A post-commit read verifies landed bytes.
 
@@ -12,4 +12,4 @@ Certificates do not include full file contents. Text duplicate diagnostics conta
 
 Atomic replacement protects readers from observing a partially written file after the staged file is flushed. Replacement may change timestamps and does not assert ACL/xattr preservation; permissions are platform-dependent.
 
-Recovery journals are validated for structure, supported version, safe transaction ID, workspace-contained member paths, duplicate paths, size limits, and SHA-256 consistency before recovery writes. The writer applies the same 8 MiB serialized-journal limit before any transaction commit, so Threadmoth cannot create recovery evidence that its own reader will reject solely for size. Their location in `.threadmoth-recovery` or legacy `.suture-recovery` is not authenticated provenance: another same-user process with equivalent filesystem authority may plant or tamper with a journal. Recovery refuses when member state is not provably original or candidate.
+Recovery journals are validated for structure, supported version, safe transaction ID, workspace-contained member paths, duplicate paths, size limits, and SHA-256 consistency before recovery writes. The writer applies the same 8 MiB compact-journal limit before any transaction commit; byte payloads use base64 strings, while the reader accepts the v1.5.1 decimal-array representation for upgrade recovery. Their location in `.threadmoth-recovery` or legacy `.suture-recovery` is not authenticated provenance: another same-user process with equivalent filesystem authority may plant or tamper with a journal. Recovery refuses when member state is not provably original or candidate.

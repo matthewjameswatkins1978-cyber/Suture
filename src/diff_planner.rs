@@ -6,6 +6,10 @@ use thiserror::Error;
 /// Planning is deliberately bounded before any diff tokenisation occurs.
 pub const MAX_PLANNER_INPUT_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_PLANNER_REGIONS: usize = 4096;
+/// Maximum total old/new bytes given to byte-level Myers refinement. Larger
+/// changed regions use one safe replacement instead of pathological allocation
+/// and search cost.
+pub const MAX_BYTE_REFINEMENT_INPUT_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffPlan {
@@ -137,15 +141,47 @@ fn refine_region(
 ) -> Result<(), DiffPlannerError> {
     let old = &observed[old_start..old_end];
     let new = &desired[new_start..new_end];
-    let old_tokens: Vec<&[u8]> = old
+    let common_prefix = old
+        .iter()
+        .zip(new.iter())
+        .take_while(|(old_byte, new_byte)| old_byte == new_byte)
+        .count();
+    let old_after_prefix = &old[common_prefix..];
+    let new_after_prefix = &new[common_prefix..];
+    let common_suffix = old_after_prefix
+        .iter()
+        .rev()
+        .zip(new_after_prefix.iter().rev())
+        .take_while(|(old_byte, new_byte)| old_byte == new_byte)
+        .count();
+    let old_changed_end = old.len() - common_suffix;
+    let new_changed_end = new.len() - common_suffix;
+    let old_changed = &old[common_prefix..old_changed_end];
+    let new_changed = &new[common_prefix..new_changed_end];
+    let changed_input = old_changed.len().checked_add(new_changed.len()).ok_or(
+        DiffPlannerError::ResourceLimit {
+            dimension: "byte_refinement_input_bytes",
+            limit: MAX_BYTE_REFINEMENT_INPUT_BYTES,
+            actual: usize::MAX,
+        },
+    )?;
+    if changed_input > MAX_BYTE_REFINEMENT_INPUT_BYTES {
+        edits.push(ByteEdit {
+            start: old_start + common_prefix,
+            end: old_start + old_changed_end,
+            replacement: new_changed.to_vec(),
+        });
+        return Ok(());
+    }
+    let old_tokens: Vec<&[u8]> = old_changed
         .iter()
         .enumerate()
-        .map(|(i, _)| &old[i..i + 1])
+        .map(|(i, _)| &old_changed[i..i + 1])
         .collect();
-    let new_tokens: Vec<&[u8]> = new
+    let new_tokens: Vec<&[u8]> = new_changed
         .iter()
         .enumerate()
-        .map(|(i, _)| &new[i..i + 1])
+        .map(|(i, _)| &new_changed[i..i + 1])
         .collect();
     let byte_diff = similar::TextDiff::configure()
         .algorithm(similar::Algorithm::Myers)
@@ -159,9 +195,9 @@ fn refine_region(
         let local_new_start = op.new_range().start;
         let local_new_end = op.new_range().end;
         edits.push(ByteEdit {
-            start: old_start + local_old_start,
-            end: old_start + local_old_end,
-            replacement: new[local_new_start..local_new_end].to_vec(),
+            start: old_start + common_prefix + local_old_start,
+            end: old_start + common_prefix + local_old_end,
+            replacement: new_changed[local_new_start..local_new_end].to_vec(),
         });
     }
     Ok(())
@@ -217,5 +253,82 @@ mod tests {
             apply_byte_edits(b"a\r\nb\r\n", &removed.edits).unwrap(),
             b""
         );
+    }
+
+    #[test]
+    fn large_changed_region_uses_one_bounded_replacement() {
+        let observed = format!("prefix{}suffix", "a".repeat(20 * 1024));
+        let desired = format!("prefix{}suffix", "b".repeat(20 * 1024));
+        let planned = plan(observed.as_bytes(), desired.as_bytes()).unwrap();
+
+        assert_eq!(planned.edits.len(), 1);
+        assert_eq!(planned.edits[0].start, "prefix".len());
+        assert_eq!(planned.edits[0].end, "prefix".len() + 20 * 1024);
+        assert_eq!(planned.edits[0].replacement.len(), 20 * 1024);
+        assert_eq!(
+            apply_byte_edits(observed.as_bytes(), &planned.edits).unwrap(),
+            desired.as_bytes()
+        );
+    }
+
+    #[test]
+    fn common_prefix_and_suffix_are_excluded_from_refinement() {
+        let observed = format!("{}old{}", "x".repeat(100_000), "y".repeat(100_000));
+        let desired = format!("{}new{}", "x".repeat(100_000), "y".repeat(100_000));
+        let planned = plan(observed.as_bytes(), desired.as_bytes()).unwrap();
+
+        assert_eq!(
+            planned.edits,
+            vec![ByteEdit {
+                start: 100_000,
+                end: 100_003,
+                replacement: b"new".to_vec(),
+            }]
+        );
+    }
+
+    #[test]
+    fn long_line_tiny_edits_at_each_position_remain_narrow() {
+        for (old, desired, expected_start) in [
+            (
+                format!("a{}", "x".repeat(100_000)),
+                format!("b{}", "x".repeat(100_000)),
+                0,
+            ),
+            (
+                format!("{}a", "x".repeat(100_000)),
+                format!("{}b", "x".repeat(100_000)),
+                100_000,
+            ),
+            (
+                format!("{}a{}", "x".repeat(50_000), "y".repeat(50_000)),
+                format!("{}b{}", "x".repeat(50_000), "y".repeat(50_000)),
+                50_000,
+            ),
+        ] {
+            let planned = plan(old.as_bytes(), desired.as_bytes()).unwrap();
+            assert_eq!(planned.edits.len(), 1);
+            assert_eq!(planned.edits[0].start, expected_start);
+            assert_eq!(
+                apply_byte_edits(old.as_bytes(), &planned.edits).unwrap(),
+                desired.as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn minified_json_javascript_crlf_and_bom_are_exact() {
+        let json_old = br#"{"a":1,"b":2}"#;
+        let json_new = br#"{"a":1,"b":3}"#;
+        let json_plan = plan(json_old, json_new).unwrap();
+        assert_eq!(
+            apply_byte_edits(json_old, &json_plan.edits).unwrap(),
+            json_new
+        );
+
+        let js_old = b"\xef\xbb\xbfconst x=1;\r\nconst y=2;\r\n";
+        let js_new = b"\xef\xbb\xbfconst x=1;\r\nconst y=3;\r\n";
+        let js_plan = plan(js_old, js_new).unwrap();
+        assert_eq!(apply_byte_edits(js_old, &js_plan.edits).unwrap(), js_new);
     }
 }

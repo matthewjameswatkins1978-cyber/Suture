@@ -1,7 +1,8 @@
 use crate::pipeline::execute_request;
 use crate::presentation::{human_bytes, human_duration_us, rule};
 use crate::protocol::{
-    Cardinality, EffectBudget, OperationPayload, Outcome, Request, PROTOCOL_VERSION,
+    Cardinality, DesiredStateOperation, EffectBudget, OperationPayload, Outcome, Request,
+    PROTOCOL_VERSION,
 };
 use crate::provider::text::TextOperation;
 use crate::workspace::Workspace;
@@ -56,7 +57,7 @@ impl Profile {
                     CaseSpec::new("text_5m", 5_000_008, 10),
                     CaseSpec::new("text_32m", 32_000_008, 3),
                     CaseSpec::new("many_lines_2m", 2_000_000, 10),
-                    CaseSpec::new("long_line_2m", 2_000_008, 5),
+                    CaseSpec::new("long_line_refinement_2m", 2_000_008, 5),
                     CaseSpec::new("small_files_250", 2_500, 1),
                 ];
             }
@@ -141,6 +142,21 @@ fn request(path: &str) -> Request {
     }
 }
 
+fn refinement_request(path: &str, desired_bytes: Vec<u8>) -> Request {
+    Request {
+        version: PROTOCOL_VERSION.into(),
+        request_id: "release-benchmark-long-line-refinement".into(),
+        allow_generated: false,
+        file_path: path.into(),
+        namespace: Default::default(),
+        expected_pre_hash: None,
+        region_guard: None,
+        cardinality: Cardinality::ExactlyOne,
+        budget: EffectBudget::default(),
+        operation: OperationPayload::DesiredState(DesiredStateOperation::Replace { desired_bytes }),
+    }
+}
+
 fn payload(case: &CaseSpec) -> Vec<u8> {
     if case.name == "tiny" {
         return b"prefix FINDME suffix\n".to_vec();
@@ -153,7 +169,7 @@ fn payload(case: &CaseSpec) -> Vec<u8> {
         bytes.extend_from_slice(b"FINDME\n");
         return bytes;
     }
-    if case.name == "long_line_2m" {
+    if case.name == "long_line_refinement_2m" {
         let mut bytes = vec![b'x'; case.bytes.saturating_sub(15)];
         bytes.extend_from_slice(b" FINDME tail\n");
         return bytes;
@@ -167,7 +183,11 @@ fn run_case(workspace: &Workspace, root: &std::path::Path, case: &CaseSpec) -> C
     let path = format!("{}.txt", case.name);
     let bytes = payload(case);
     fs::write(root.join(&path), &bytes).expect("benchmark fixture write failed");
-    let request = request(&path);
+    let request = if case.name == "long_line_refinement_2m" {
+        refinement_request(&path, vec![b'y'; bytes.len()])
+    } else {
+        request(&path)
+    };
     let start = Instant::now();
     let mut wrong_applied = 0;
     let mut certificate_bytes = 0;
