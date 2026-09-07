@@ -63,7 +63,7 @@ jobs:
           Compress-Archive -Path package/* -DestinationPath "${{ matrix.artifact }}.zip"
       - name: Checksums Unix
         if: runner.os != 'Windows'
-        run: sha256sum "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.sha256"
+        run: shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.sha256"
       - name: Checksums Windows
         if: runner.os == 'Windows'
         shell: pwsh
