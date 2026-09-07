@@ -54,4 +54,50 @@ Threadmoth also exposes an MCP stdio adapter:
 threadmoth mcp
 ```
 
-MCP is an adapter over the same deterministic core. The CLI/JSON contract remains the lowest-common-denominator integration surface.
+MCP is an adapter over the same deterministic core. The CLI/JSON contract remains the lowest-common-denominator integration surface. A minimal stdio configuration is:
+
+```json
+{
+  "mcpServers": {
+    "threadmoth": {
+      "command": "threadmoth",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The MCP tools are `threadmoth_capabilities`, `threadmoth_inspect`,
+`threadmoth_suggest`, `threadmoth_explain`, `threadmoth_preview`,
+`threadmoth_transact_preview`, `threadmoth_mutate`, and `threadmoth_transact`.
+
+## The 30-second agent loop
+
+```text
+capabilities / suggest
+        ↓
+preview
+        ↓
+APPLIED or REFUSED
+        ↓
+if REFUSED: explain / choose a reported candidate selection_id
+        ↓
+preview again with expected_pre_hash + candidate_guard
+        ↓
+mutate the same guarded request
+        ↓
+keep the certificate as proof
+```
+
+Tiny example conversation:
+
+```text
+Agent: threadmoth_inspect({"path":"config.json"})
+Threadmoth: {"sha256":"...","encoding":"utf8","newline_profile":"lf",...}
+Agent: threadmoth_suggest({"path":"config.json","goal":"set-value","at":"$.port"})
+Threadmoth: {"provider":"json","request_template":{...}}
+Agent: threadmoth_preview(request_template)
+Threadmoth: {"outcome":"APPLIED","commit":{"mode":"dry_run"},...}
+Agent: threadmoth_mutate(the_same_request)
+Threadmoth: {"outcome":"APPLIED","post_hash":"...",...}
+```

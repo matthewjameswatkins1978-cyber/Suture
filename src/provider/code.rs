@@ -112,6 +112,75 @@ pub fn plan(
     })
 }
 
+pub fn plan_at(
+    content: &[u8],
+    op: &CodeOperation,
+    start: usize,
+    end: usize,
+) -> Result<Vec<ByteEdit>, CodeError> {
+    let (language, target, replacement, placement, node_kind) = match op {
+        CodeOperation::ReplaceNode {
+            language,
+            target,
+            replacement,
+            node_kind,
+        } => (
+            language,
+            target,
+            replacement.as_bytes(),
+            Placement::Replace,
+            node_kind,
+        ),
+        CodeOperation::InsertBeforeNode {
+            language,
+            target,
+            content,
+            node_kind,
+        } => (
+            language,
+            target,
+            content.as_bytes(),
+            Placement::Before,
+            node_kind,
+        ),
+        CodeOperation::InsertAfterNode {
+            language,
+            target,
+            content,
+            node_kind,
+        } => (
+            language,
+            target,
+            content.as_bytes(),
+            Placement::After,
+            node_kind,
+        ),
+        CodeOperation::RemoveNode {
+            language,
+            target,
+            node_kind,
+        } => (language, target, &[][..], Placement::Replace, node_kind),
+    };
+    syntax::plan_at(
+        content,
+        language,
+        target,
+        replacement,
+        placement,
+        node_kind.as_deref(),
+        LanguageFamily::Code,
+        start,
+        end,
+    )
+    .map(|plan| plan.edits)
+    .map_err(|error| match error {
+        syntax::SyntaxError::Refused(reason) => CodeError::Refused(reason),
+        syntax::SyntaxError::Engine(error) => CodeError::Refused(RefusalReason::Custom {
+            message: error.to_string(),
+        }),
+    })
+}
+
 pub fn validate(content: &[u8], language_name: &str) -> Result<(), CodeError> {
     syntax::validate(content, language_name).map_err(|error| match error {
         syntax::SyntaxError::Refused(reason) => CodeError::Refused(reason),

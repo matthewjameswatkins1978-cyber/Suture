@@ -73,6 +73,99 @@ fn tools_list_exposes_preview_and_notification_has_no_response() {
         .unwrap()
         .iter()
         .any(|tool| tool["name"] == "threadmoth_preview"));
+    for tool_name in [
+        "threadmoth_inspect",
+        "threadmoth_suggest",
+        "threadmoth_explain",
+        "threadmoth_transact_preview",
+    ] {
+        assert!(output[0]["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == tool_name));
+    }
+}
+
+#[test]
+fn read_only_discovery_tools_reuse_cli_metadata() {
+    let workspace = TempDir::new().unwrap();
+    fs::write(workspace.path().join("config.json"), b"{\"port\": 8080}\n").unwrap();
+    let output = call_mcp(
+        &workspace,
+        &[
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"threadmoth_inspect","arguments":{"path":"config.json"}}}),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"threadmoth_suggest","arguments":{"path":"config.json","goal":"set-value","at":"$.port","mode":"safe"}}}),
+            json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"threadmoth_explain","arguments":{"code":"TARGET_AMBIGUOUS"}}}),
+            json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"threadmoth_capabilities","arguments":{"selector":"json.set","for_path":"config.json"}}}),
+        ],
+    );
+    assert_eq!(
+        output[0]["result"]["structuredContent"]["file_path"],
+        "config.json"
+    );
+    assert_eq!(output[0]["result"]["structuredContent"]["bytes"], 15);
+    assert_eq!(output[1]["result"]["structuredContent"]["provider"], "json");
+    assert_eq!(
+        output[2]["result"]["structuredContent"]["code"],
+        "TARGET_AMBIGUOUS"
+    );
+    assert_eq!(
+        output[3]["result"]["structuredContent"]["target"]["provider"],
+        "json"
+    );
+    assert_eq!(
+        fs::read(workspace.path().join("config.json")).unwrap(),
+        b"{\"port\": 8080}\n"
+    );
+}
+
+#[test]
+fn transaction_preview_is_non_writing_and_matches_commit_plan() {
+    let workspace = TempDir::new().unwrap();
+    fs::write(workspace.path().join("x.txt"), b"old\n").unwrap();
+    let transaction = json!({
+        "version": "1.2.0",
+        "transaction_id": "mcp-preview",
+        "requests": [replace_request("x.txt")]
+    });
+    let output = call_mcp(
+        &workspace,
+        &[
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"threadmoth_transact_preview","arguments":transaction}}),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"threadmoth_transact","arguments":transaction}}),
+        ],
+    );
+    assert_eq!(
+        output[0]["result"]["structuredContent"]["outcome"],
+        "APPLIED"
+    );
+    assert_eq!(
+        output[0]["result"]["structuredContent"]["transaction_guarantee"],
+        "dry_run"
+    );
+    assert_eq!(
+        output[1]["result"]["structuredContent"]["outcome"],
+        "APPLIED"
+    );
+    assert_eq!(
+        output[0]["result"]["structuredContent"]["certificates"][0]["changed_ranges"],
+        output[1]["result"]["structuredContent"]["certificates"][0]["changed_ranges"]
+    );
+    assert_eq!(fs::read(workspace.path().join("x.txt")).unwrap(), b"new\n");
+}
+
+#[test]
+fn malformed_discovery_inputs_fail_as_tool_errors() {
+    let workspace = TempDir::new().unwrap();
+    let output = call_mcp(
+        &workspace,
+        &[json!({
+            "jsonrpc":"2.0","id":1,"method":"tools/call",
+            "params":{"name":"threadmoth_inspect","arguments":{"path":"x.txt","extra":true}}
+        })],
+    );
+    assert_eq!(output[0]["result"]["isError"], true);
 }
 
 #[test]

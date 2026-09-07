@@ -513,28 +513,10 @@ fn run_inspect(path: &Path) {
             std::process::exit(3)
         }
     };
-    match ws.read_file(path.as_ref()) {
-        Ok(bytes) => {
-            let newline = if bytes.windows(2).any(|w| w == b"\r\n") {
-                "crlf"
-            } else if bytes.contains(&b'\n') {
-                "lf"
-            } else {
-                "none"
-            };
-            let out = serde_json::json!({
-                "protocol_version": PROTOCOL_VERSION,
-                "file_path": path,
-                "bytes": bytes.len(),
-                "sha256": threadmoth::engine::compute_sha256(&bytes),
-                "encoding": if bytes.starts_with(&[0xef, 0xbb, 0xbf]) { "utf8_bom" } else { "utf8" },
-                "newline_profile": newline,
-                "final_newline": bytes.ends_with(b"\n")
-            });
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
-        }
-        Err(e) => {
-            eprintln!("inspect failed: {e}");
+    match threadmoth::metadata::inspect(&ws, path.as_ref()) {
+        Ok(output) => println!("{}", serde_json::to_string_pretty(&output).unwrap()),
+        Err(error) => {
+            eprintln!("inspect failed: {error}");
             std::process::exit(2);
         }
     }

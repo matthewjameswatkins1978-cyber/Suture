@@ -31,6 +31,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -51,6 +52,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -75,6 +77,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -101,6 +104,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -125,6 +129,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: Some("sha256:stalehashvalue".to_string()),
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -149,6 +154,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -168,6 +174,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: post_hash,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -188,6 +195,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -208,6 +216,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -230,6 +239,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -254,6 +264,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -276,6 +287,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -297,6 +309,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -318,6 +331,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -342,6 +356,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -362,6 +377,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -385,6 +401,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -405,6 +422,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -426,6 +444,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Json(JsonOperation::Set {
@@ -446,6 +465,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Json(JsonOperation::Set {
@@ -466,6 +486,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Json(JsonOperation::Set {
@@ -486,6 +507,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Json(JsonOperation::Insert {
@@ -507,6 +529,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Json(JsonOperation::Set {
@@ -534,6 +557,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Toml(TomlOperation::Set {
@@ -556,6 +580,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Toml(TomlOperation::Set {
@@ -576,6 +601,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Toml(TomlOperation::Set {
@@ -601,6 +627,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Toml(TomlOperation::Delete {
@@ -620,6 +647,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Toml(TomlOperation::Set {
@@ -644,6 +672,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -676,6 +705,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -697,6 +727,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -728,6 +759,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -755,6 +787,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: Some(hash32),
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -780,6 +813,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Json(JsonOperation::Set {
@@ -813,6 +847,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -837,6 +872,7 @@ fn test_adversarial_corpus_all_38() {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: Default::default(),
         operation: OperationPayload::Text(TextOperation::Replace {

@@ -133,6 +133,7 @@ fn request(path: &str) -> Request {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: EffectBudget::default(),
         operation: OperationPayload::Text(TextOperation::Replace {
@@ -151,6 +152,7 @@ fn refinement_request(path: &str, desired_bytes: Vec<u8>) -> Request {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: EffectBudget::default(),
         operation: OperationPayload::DesiredState(DesiredStateOperation::Replace { desired_bytes }),

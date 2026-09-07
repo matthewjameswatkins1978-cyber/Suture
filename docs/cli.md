@@ -1,8 +1,8 @@
 # Threadmoth CLI
 
-Threadmoth 1.6.0 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
+Threadmoth 1.7.0 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
 
-The MCP stdio server exposes `threadmoth_preview` alongside mutation, transaction, and capability tools. Preview runs the same guarded planning and certification pipeline as mutation with commit disabled. JSON-RPC notifications, including `notifications/initialized`, are consumed without a response; ordinary requests receive a JSON-RPC result or standard error response.
+The MCP stdio server exposes read-only `threadmoth_inspect`, `threadmoth_suggest`, and `threadmoth_explain` alongside `threadmoth_capabilities`, `threadmoth_preview`, `threadmoth_transact_preview`, mutation, and transaction tools. Preview runs the same guarded planning and certification pipeline as mutation with commit disabled. JSON-RPC notifications, including `notifications/initialized`, are consumed without a response; ordinary requests receive a JSON-RPC result or standard error response.
 
 ## Benchmark commands
 
@@ -79,7 +79,7 @@ The summary shows the outcome, provider, effect size, budget result, newline/pre
 }
 ```
 
-Threadmoth 1.6.0 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
+Threadmoth 1.7.0 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
 
 ## Shell completion
 
@@ -181,4 +181,4 @@ threadmoth doctor
 
 ## Compatibility policy
 
-Threadmoth 1.6.0 keeps the important pre-1.3 spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. They are not the preferred documentation surface, but existing agent scripts do not need an immediate flag-day migration.
+Threadmoth 1.7.0 keeps the important pre-1.3 spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. It also accepts protocol 1.1 requests while advertising protocol 1.2 as current.

@@ -23,6 +23,7 @@ fn request(path: &str, operation: OperationPayload) -> Request {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Default::default(),
         budget: EffectBudget {
             allowed_path_prefixes: Vec::new(),

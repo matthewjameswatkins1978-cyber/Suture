@@ -6,10 +6,11 @@ use crate::lifecycle::FileOperation;
 use crate::path::PathNormalizer;
 use crate::pattern::{self, PatternError};
 use crate::protocol::{
-    ByteRange, Certificate, CommitGuarantee, DesiredStateEvidence, DesiredStateOperation,
-    EffectBudget, EffectUsage, FailureReason, MutationPlan, OperationPayload, Outcome,
-    PreservationFacts, RefusalReason, Request, StructuralValidation, TransactionCertificate,
-    TransactionRequest, MAX_FILE_BYTES, MAX_TRANSACTION_REQUESTS, PROTOCOL_VERSION,
+    candidate_selection_id, ByteRange, CandidateGuard, Certificate, CommitGuarantee,
+    DesiredStateEvidence, DesiredStateOperation, EffectBudget, EffectUsage, FailureReason,
+    MutationPlan, OperationPayload, Outcome, PreservationFacts, RefusalReason, Request,
+    StructuralValidation, TransactionCertificate, TransactionRequest, MAX_FILE_BYTES,
+    MAX_TRANSACTION_REQUESTS, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use crate::provider::code::{self, CodeError, CodeOperation};
 use crate::provider::dotenv::{self, DotenvError};
@@ -40,6 +41,7 @@ pub fn execute_pipeline(
         expected_pre_hash: (!plan.expected_pre_hash.is_empty())
             .then(|| plan.expected_pre_hash.clone()),
         region_guard: None,
+        candidate_guard: None,
         cardinality: plan.cardinality.clone(),
         budget: EffectBudget::default(),
         operation: OperationPayload::Text(op.clone()),
@@ -55,14 +57,14 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
         Ok(path) => path,
         Err(error) => return workspace_error(request, &normalized_path, provider, error),
     };
-    if request.version != PROTOCOL_VERSION {
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&request.version.as_str()) {
         return refusal(
             request,
             &file_path,
             provider,
             RefusalReason::UnsupportedProtocolVersion {
                 requested: request.version.clone(),
-                supported: PROTOCOL_VERSION.into(),
+                supported: SUPPORTED_PROTOCOL_VERSIONS.join(", "),
             },
             String::new(),
         );
@@ -124,6 +126,41 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
             );
         }
     }
+    if request.candidate_guard.is_some()
+        && request
+            .expected_pre_hash
+            .as_deref()
+            .is_none_or(str::is_empty)
+    {
+        return refusal(
+            request,
+            &file_path,
+            provider,
+            RefusalReason::MalformedInput {
+                details:
+                    "candidate_guard requires expected_pre_hash from the observed source state"
+                        .into(),
+            },
+            pre_hash,
+        );
+    }
+    if request.candidate_guard.is_some()
+        && !matches!(
+            request.cardinality,
+            crate::protocol::Cardinality::ExactlyOne
+        )
+    {
+        return refusal(
+            request,
+            &file_path,
+            provider,
+            RefusalReason::CardinalityMismatch {
+                expected: "exactly_one when candidate_guard is present".into(),
+                actual: 1,
+            },
+            pre_hash,
+        );
+    }
     if let Some(guard) = &request.region_guard {
         if let Err(reason) = validate_region_guard(&original, guard, request) {
             return refusal(request, &file_path, provider, reason, pre_hash);
@@ -152,7 +189,7 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
             pre_hash,
         );
     }
-    let edits = match plan_edits(&original, request, &file_path) {
+    let edits = match plan_edits(&original, request, &file_path, &pre_hash) {
         Ok(x) => x,
         Err((r, _d)) => return refusal(request, &file_path, provider, r, pre_hash),
     };
@@ -363,14 +400,14 @@ fn prepare_content_request(
         Ok(path) => path,
         Err(error) => return Err(workspace_error(request, &normalized_path, provider, error)),
     };
-    if request.version != PROTOCOL_VERSION {
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&request.version.as_str()) {
         return Err(refusal(
             request,
             &file_path,
             provider,
             RefusalReason::UnsupportedProtocolVersion {
                 requested: request.version.clone(),
-                supported: PROTOCOL_VERSION.into(),
+                supported: SUPPORTED_PROTOCOL_VERSIONS.join(", "),
             },
             String::new(),
         ));
@@ -457,7 +494,7 @@ fn prepare_content_request(
             pre_hash,
         ));
     }
-    let edits = match plan_edits(&original, request, &file_path) {
+    let edits = match plan_edits(&original, request, &file_path, &pre_hash) {
         Ok(edits) => edits,
         Err((reason, _)) => return Err(refusal(request, &file_path, provider, reason, pre_hash)),
     };
@@ -552,12 +589,12 @@ pub fn execute_transaction(
     transaction: &TransactionRequest,
     dry_run: bool,
 ) -> TransactionCertificate {
-    if transaction.version != PROTOCOL_VERSION {
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&transaction.version.as_str()) {
         return transaction_refusal(
             transaction,
             RefusalReason::UnsupportedProtocolVersion {
                 requested: transaction.version.clone(),
-                supported: PROTOCOL_VERSION.into(),
+                supported: SUPPORTED_PROTOCOL_VERSIONS.join(", "),
             },
         );
     }
@@ -870,12 +907,12 @@ fn execute_single_file_transaction(
     let mut certificates = Vec::new();
     let mut aggregate = zero_effect();
     for request in &transaction.requests {
-        if request.version != PROTOCOL_VERSION {
+        if !SUPPORTED_PROTOCOL_VERSIONS.contains(&request.version.as_str()) {
             return transaction_refusal(
                 transaction,
                 RefusalReason::UnsupportedProtocolVersion {
                     requested: request.version.clone(),
-                    supported: PROTOCOL_VERSION.into(),
+                    supported: SUPPORTED_PROTOCOL_VERSIONS.join(", "),
                 },
             );
         }
@@ -930,7 +967,7 @@ fn execute_single_file_transaction(
             }
         }
         let pre_hash = compute_sha256(&current);
-        let edits = match plan_edits(&current, request, &path) {
+        let edits = match plan_edits(&current, request, &path, &pre_hash) {
             Ok(edits) => edits,
             Err((reason, _)) => return transaction_refusal(transaction, reason),
         };
@@ -1202,6 +1239,148 @@ fn transaction_journal_error(
 }
 
 fn plan_edits(
+    original: &[u8],
+    request: &Request,
+    file_path: &str,
+    pre_hash: &str,
+) -> Result<Vec<ByteEdit>, (RefusalReason, String)> {
+    if let Some(guard) = request.candidate_guard.as_ref() {
+        if request
+            .expected_pre_hash
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            return Err((
+                RefusalReason::MalformedInput {
+                    details:
+                        "candidate_guard requires expected_pre_hash from the observed source state"
+                            .into(),
+                },
+                "candidate_guard requires expected_pre_hash".into(),
+            ));
+        }
+        if !matches!(
+            request.cardinality,
+            crate::protocol::Cardinality::ExactlyOne
+        ) {
+            return Err((
+                RefusalReason::CardinalityMismatch {
+                    expected: "exactly_one when candidate_guard is present".into(),
+                    actual: 1,
+                },
+                "candidate_guard cannot override the requested cardinality".into(),
+            ));
+        }
+        if guard.selection_id.is_empty() {
+            return Err((
+                RefusalReason::CandidateSelectionInvalid {
+                    offset: guard.offset,
+                    selection_id: String::new(),
+                    details: "selection_id must not be empty".into(),
+                },
+                "candidate selection ID is empty".into(),
+            ));
+        }
+    }
+    let planned = plan_edits_unchecked(original, request, file_path);
+    let Err((mut reason, detail)) = planned else {
+        return planned;
+    };
+    enrich_candidates(&mut reason, pre_hash, provider_name(&request.operation));
+    let Some(guard) = request.candidate_guard.as_ref() else {
+        return Err((reason, detail));
+    };
+    let Some(candidate) = candidate_for_guard(&reason, guard) else {
+        return Err((
+            RefusalReason::CandidateSelectionInvalid {
+                offset: guard.offset,
+                selection_id: guard.selection_id.clone(),
+                details: "selection_id and offset do not identify one reported candidate".into(),
+            },
+            "candidate selection did not match the refusal certificate".into(),
+        ));
+    };
+    guarded_plan(original, request, candidate)
+}
+
+fn enrich_candidates(reason: &mut RefusalReason, pre_hash: &str, provider: &str) {
+    if let RefusalReason::DuplicateTarget { candidates, .. } = reason {
+        for candidate in candidates {
+            if candidate.end < candidate.start {
+                continue;
+            }
+            candidate.selection_id = candidate_selection_id(
+                pre_hash,
+                provider,
+                candidate.start,
+                candidate.end,
+                &candidate.anchor_sha256,
+            );
+        }
+    }
+}
+
+fn candidate_for_guard<'a>(
+    reason: &'a RefusalReason,
+    guard: &CandidateGuard,
+) -> Option<&'a crate::protocol::Candidate> {
+    let RefusalReason::DuplicateTarget { candidates, .. } = reason else {
+        return None;
+    };
+    let mut matches = candidates.iter().filter(|candidate| {
+        candidate.offset == guard.offset && candidate.selection_id == guard.selection_id
+    });
+    let candidate = matches.next()?;
+    matches.next().is_none().then_some(candidate)
+}
+
+fn guarded_plan(
+    original: &[u8],
+    request: &Request,
+    candidate: &crate::protocol::Candidate,
+) -> Result<Vec<ByteEdit>, (RefusalReason, String)> {
+    match &request.operation {
+        OperationPayload::Text(operation) => {
+            TextProvider::plan_at(original, operation, candidate.start, candidate.end).map_err(
+                |error| match error {
+                    TextProviderError::Refused(reason) => {
+                        let detail = reason.code().to_string();
+                        (reason, detail)
+                    }
+                    TextProviderError::Error { message } => (
+                        RefusalReason::Custom {
+                            message: message.clone(),
+                        },
+                        message,
+                    ),
+                },
+            )
+        }
+        OperationPayload::Code(operation) => {
+            code::plan_at(original, operation, candidate.start, candidate.end).map_err(|error| {
+                match error {
+                    CodeError::Refused(reason) => {
+                        let detail = reason.code().to_string();
+                        (reason, detail)
+                    }
+                }
+            })
+        }
+        _ => Err((
+            RefusalReason::CandidateSelectionInvalid {
+                offset: candidate.offset,
+                selection_id: candidate.selection_id.clone(),
+                details: format!(
+                    "candidate selection is not implemented for provider {}",
+                    provider_name(&request.operation)
+                ),
+            },
+            "no safe automatic candidate-selected plan is available for this provider".into(),
+        )),
+    }
+}
+
+fn plan_edits_unchecked(
     original: &[u8],
     request: &Request,
     file_path: &str,
@@ -2425,7 +2604,7 @@ fn comment_count(b: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{Cardinality, OperationPayload};
+    use crate::protocol::{Cardinality, OperationPayload, PROTOCOL_VERSION};
     use crate::provider::text::TextOperation;
     use tempfile::TempDir;
     #[test]
@@ -2441,6 +2620,7 @@ mod tests {
             namespace: Default::default(),
             expected_pre_hash: None,
             region_guard: None,
+            candidate_guard: None,
             cardinality: Cardinality::ExactlyOne,
             budget: Default::default(),
             operation: OperationPayload::Text(TextOperation::Replace {
@@ -2467,6 +2647,7 @@ mod tests {
             namespace: Default::default(),
             expected_pre_hash: None,
             region_guard: None,
+            candidate_guard: None,
             cardinality: Cardinality::ExactlyOne,
             budget: Default::default(),
             operation: OperationPayload::Text(TextOperation::Replace {

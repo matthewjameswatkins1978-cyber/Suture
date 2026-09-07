@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.7.0 - Agent usability
+
+Threadmoth 1.7.0 makes the refusal-first boundary easier for agents to discover, inspect, and recover through.
+
+### Added
+
+- MCP parity for inspect, suggest, explain, path-scoped capabilities, and non-writing transaction preview.
+- Protocol 1.2 candidate selection guards with deterministic physical selection IDs bound to the exact observed file identity.
+- Provider-preserving refusal recovery and adversarial text/code candidate-selection coverage.
+- macOS Apple Silicon and Intel release targets.
+- A short agent integration loop and copy-paste MCP configuration.
+
+### Changed
+
+- Protocol 1.1 requests and recovery journals remain accepted for compatibility.
+- Common `.env.*`, Dockerfile, Makefile, Cargo, package, TypeScript, and config filename detection is deterministic without content guessing.
+
 ## 1.6.0 - Hardening release
 
 Threadmoth 1.6.0 strengthens Threadmoth against several newly identified ambiguity, recovery, protocol, and pathological-input edge cases.

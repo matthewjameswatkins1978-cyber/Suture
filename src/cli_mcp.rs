@@ -1,4 +1,5 @@
 use schemars::schema_for;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     env,
@@ -11,6 +12,43 @@ use threadmoth::{
 };
 
 use crate::cli::THREADMOTH_VERSION;
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct InspectToolArgs {
+    path: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SuggestToolArgs {
+    path: String,
+    #[serde(default)]
+    goal: Option<String>,
+    #[serde(default)]
+    at: Option<String>,
+    #[serde(default = "default_suggestion_mode")]
+    mode: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ExplainToolArgs {
+    code: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+struct CapabilitiesToolArgs {
+    #[serde(default)]
+    selector: Option<String>,
+    #[serde(default)]
+    for_path: Option<String>,
+}
+
+fn default_suggestion_mode() -> String {
+    "safe".into()
+}
 
 pub fn run_mcp() {
     let workspace = match env::current_dir() {
@@ -88,7 +126,11 @@ fn handle_mcp_message(workspace: &Workspace, request: Value) -> Option<Value> {
                 "result": {"tools": [
                     {"name": "threadmoth_mutate", "description": "Apply one typed Threadmoth mutation and return its certificate", "inputSchema": schema_for!(Request)},
                     {"name": "threadmoth_preview", "description": "Preview one typed Threadmoth mutation without writing", "inputSchema": schema_for!(Request)},
-                    {"name": "threadmoth_capabilities", "description": "Return Threadmoth capabilities", "inputSchema": {"type": "object"}},
+                    {"name": "threadmoth_inspect", "description": "Read target identity, encoding and newline facts without mutation", "inputSchema": schema_for!(InspectToolArgs)},
+                    {"name": "threadmoth_suggest", "description": "Return the existing deterministic request suggestion for a target", "inputSchema": schema_for!(SuggestToolArgs)},
+                    {"name": "threadmoth_explain", "description": "Return stable metadata for a refusal or failure reason", "inputSchema": schema_for!(ExplainToolArgs)},
+                    {"name": "threadmoth_capabilities", "description": "Return Threadmoth capabilities, optionally scoped to a provider or path", "inputSchema": schema_for!(CapabilitiesToolArgs)},
+                    {"name": "threadmoth_transact_preview", "description": "Preview a guarded transaction without writing", "inputSchema": schema_for!(TransactionRequest)},
                     {"name": "threadmoth_transact", "description": "Prepare and commit a guarded transaction", "inputSchema": schema_for!(TransactionRequest)}
                 ]}
             }),
@@ -144,7 +186,40 @@ fn handle_mcp_message(workspace: &Workspace, request: Value) -> Option<Value> {
 fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Value, String> {
     match name {
         "threadmoth_capabilities" | "suture_capabilities" => {
-            serde_json::to_value(threadmoth::capabilities::current()).map_err(|e| e.to_string())
+            let args = serde_json::from_value::<CapabilitiesToolArgs>(arguments)
+                .map_err(|e| e.to_string())?;
+            let output = if let Some(path) = args.for_path {
+                let bytes = workspace.read_file(&path).ok();
+                threadmoth::metadata::capabilities_for(&path, bytes.as_deref())
+            } else {
+                threadmoth::metadata::capability_view(args.selector.as_deref())
+            };
+            Ok(output)
+        }
+        "threadmoth_inspect" => {
+            let args =
+                serde_json::from_value::<InspectToolArgs>(arguments).map_err(|e| e.to_string())?;
+            threadmoth::metadata::inspect(workspace, &args.path)
+        }
+        "threadmoth_suggest" => {
+            let args =
+                serde_json::from_value::<SuggestToolArgs>(arguments).map_err(|e| e.to_string())?;
+            let bytes = workspace.read_file(&args.path).ok();
+            serde_json::to_value(threadmoth::metadata::suggest(
+                &args.path,
+                args.goal.as_deref(),
+                args.at.as_deref(),
+                &args.mode,
+                bytes.as_deref(),
+            ))
+            .map_err(|e| e.to_string())
+        }
+        "threadmoth_explain" => {
+            let args =
+                serde_json::from_value::<ExplainToolArgs>(arguments).map_err(|e| e.to_string())?;
+            let reason = threadmoth::metadata::reason(&args.code)
+                .ok_or_else(|| format!("unknown reason code: {}", args.code))?;
+            serde_json::to_value(reason).map_err(|e| e.to_string())
         }
         "threadmoth_mutate" | "suture_mutate" => {
             let request =
@@ -170,6 +245,18 @@ fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Valu
                     workspace,
                     &transaction,
                     false,
+                ))
+                .map_err(|e| e.to_string())?,
+            )
+        }
+        "threadmoth_transact_preview" => {
+            let transaction = serde_json::from_value::<TransactionRequest>(arguments)
+                .map_err(|e| e.to_string())?;
+            Ok(
+                serde_json::to_value(threadmoth::pipeline::execute_transaction(
+                    workspace,
+                    &transaction,
+                    true,
                 ))
                 .map_err(|e| e.to_string())?,
             )

@@ -1,23 +1,23 @@
-# Protocol v1.1
+# Protocol v1.2
 
-A request is JSON with `version: "1.1.0"`, a stable `request_id`, a workspace-relative `file_path`, optional `namespace`, optional `expected_pre_hash`, a `cardinality`, an optional hard effect `budget`, and an operation. Package version 1.6.0 does not imply a protocol bump. Run `threadmoth help`, `threadmoth examples`, `threadmoth schema`, `threadmoth explain`, `threadmoth suggest`, or `threadmoth capabilities` for local discovery. Unknown fields are rejected.
+A request is JSON with `version: "1.2.0"`, a stable `request_id`, a workspace-relative `file_path`, optional `namespace`, optional `expected_pre_hash`, optional `candidate_guard`, a `cardinality`, an optional hard effect `budget`, and an operation. Requests using protocol `1.1.0` remain accepted with their original semantics. Package version 1.7.0 does not imply that every request must upgrade immediately. Run `threadmoth help`, `threadmoth examples`, `threadmoth schema`, `threadmoth explain`, `threadmoth suggest`, or `threadmoth capabilities` for local discovery. Unknown fields are rejected.
 
 The operation is encoded as an outer provider and nested tagged operation:
 
 ```json
-{"version":"1.1.0","request_id":"example-2","file_path":"config.json","cardinality":{"type":"exactly_one"},"budget":{"max_files":1,"max_matches":1,"max_changed_lines":4},"operation":{"provider":"json","operation":{"type":"set","path":"$.server.port","value":8080}}}
+{"version":"1.2.0","request_id":"example-2","file_path":"config.json","cardinality":{"type":"exactly_one"},"budget":{"max_files":1,"max_matches":1,"max_changed_lines":4},"operation":{"provider":"json","operation":{"type":"set","path":"$.server.port","value":8080}}}
 ```
 
 Text supports exact and idempotent desired-state operations. JSON/JSONC support source-preserving structured paths; TOML supports dotted paths; YAML, Markdown, dotenv, bounded pattern, strict unified diff, filesystem lifecycle, and Tree-sitter code providers are separate explicit providers. Structured paths require `exactly_one`; broad operations must state their cardinality.
 
 The `desired_state` provider accepts exact desired bytes. Threadmoth derives strictly bounded deterministic edits, checks the in-memory candidate equals those bytes, and checks the post-commit readback has the same SHA-256. It does not execute formatters or claim semantic preservation percentages.
 
-`filesystem` is the canonical lifecycle-provider spelling in Threadmoth 1.6.0 discovery, schema output, certificates, and newly generated requests. The older request spelling `file` remains accepted as a compatibility alias and is canonicalized to `filesystem` when Threadmoth serializes it.
+`filesystem` is the canonical lifecycle-provider spelling in Threadmoth 1.7.0 discovery, schema output, certificates, and newly generated requests. The older request spelling `file` remains accepted as a compatibility alias and is canonicalized to `filesystem` when Threadmoth serializes it.
 
 Outcomes are `APPLIED`, `NO_CHANGE`, `REFUSED`, and `FAILED`. Refusals include stable reasons such as `stale_identity`, `cardinality_mismatch`, `cardinality_ambiguous`, `unsupported_encoding`, `malformed_input`, `workspace_traversal`, `symlink_escape`, `preservation_unavailable`, and `unsupported_protocol_version`.
 
 An applied certificate includes protocol/provider identity, request ID, expected and observed cardinality, pre/post SHA-256, changed byte/line ranges, bounded diff, structural validation, preservation facts, effect-budget usage, commit guarantee, and recovery state. Diff output is capped at 4096 characters. Transaction certificates contain one certificate per member and one rollback/recovery state.
 
-Every refusal and relevant failure certificate includes a stable `reason_code`; use `threadmoth explain REASON_CODE` for local recovery guidance or `threadmoth suggest --from-refusal CERTIFICATE` for deterministic next request skeletons. Exit codes: `0` applied/no-change, `2` refused, `3` runtime failure.
+Every refusal and relevant failure certificate includes a stable `reason_code`; use `threadmoth explain REASON_CODE` for local recovery guidance or `threadmoth suggest --from-refusal CERTIFICATE` for deterministic next request skeletons. Ambiguous candidates include `start`, `end`, the exact target, and a `selection_id`. A candidate guard is valid only with the exact observed `expected_pre_hash`; any changed file returns `STALE_IDENTITY` before selection. Exit codes: `0` applied/no-change, `2` refused, `3` runtime failure.
 
 The full JSON certificate remains the default mutation output. Humans can add `--summary` to `preview`, `mutate`, or `transact` for a compact view of outcome, effect, preservation, hashes, and budget status. When a numeric effect budget is too small, that summary reports the exact minimum values implied by the prepared plan without modifying the request.

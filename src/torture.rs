@@ -61,6 +61,7 @@ fn request(path: &str, operation: TextOperation) -> Request {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: EffectBudget::default(),
         operation: OperationPayload::Text(operation),

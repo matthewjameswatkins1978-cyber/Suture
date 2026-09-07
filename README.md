@@ -14,7 +14,7 @@ Threadmoth is a small Rust runtime for **safe, source-preserving file mutation**
 
 > The parser gets to point at the cloth. It doesn’t get to re-weave it.
 
-Threadmoth 1.6 is a focused hardening release over the shared syntax engine and language-neutral desired-state planner. Providers and planners propose `Vec<ByteEdit>`; Core alone guards, applies, verifies, and certifies them.
+Threadmoth 1.7 is an agent-usability release over the shared syntax engine and language-neutral desired-state planner. Providers and planners propose `Vec<ByteEdit>`; Core alone guards, applies, verifies, and certifies them.
 
 It can target text, structured data, configuration files, Markdown, dotenv files, regex patterns, syntax-aware code operations, strict patches, and guarded file lifecycle operations while preserving unrelated bytes. Every successful mutation is checked, committed through one controlled core, and returned with evidence describing what was observed and what actually changed.
 
@@ -101,7 +101,7 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Threadmoth 1.6.0 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
+Threadmoth 1.7.0 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
 
 ```text
 PASS  8/8 cases · 0 wrong mutations · correctness checked
@@ -116,7 +116,7 @@ Download the platform binary from a GitHub release and put `threadmoth` (or `Thr
 Building from source requires Rust 1.85 or newer:
 
 ```text
-cargo install --path .
+cargo install threadmoth
 ```
 
 `threadmoth` is the canonical command. The historical `suture` executable is no longer built; use `threadmoth`.
@@ -270,7 +270,7 @@ Threadmoth currently supports:
 
 Providers propose candidates. **Core alone commits them.**
 
-`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.6.0 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
+`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.7.0 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
 
 ## Real-world dogfood: Lantern Keeper
 
@@ -340,7 +340,7 @@ Threadmoth is intentionally narrow. It mutates files. It does **not** execute Gi
 
 The workspace layer confines paths, rejects traversal and escaping symlinks, stages writes in the destination directory, flushes before replacement, rechecks the observed hash immediately before commit, and reads the committed bytes back before certification.
 
-The v1.1 protocol supports UTF-8, UTF-8 BOM, LF, CRLF, and either final-newline state. Unknown legacy encodings are refused. Requests may declare hard effect budgets. Multi-file transactions stage candidates in memory, journal before commit, roll back on failure where possible, and expose recovery state.
+The v1.2 protocol supports UTF-8, UTF-8 BOM, LF, CRLF, and either final-newline state. Unknown legacy encodings are refused. Requests may declare hard effect budgets. Multi-file transactions stage candidates in memory, journal before commit, roll back on failure where possible, and expose recovery state. Ambiguous text and code targets return deterministic `selection_id` values; a caller may select one only with the exact observed `expected_pre_hash` and `candidate_guard`.
 
 ## Documentation
 

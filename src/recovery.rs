@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::engine::compute_sha256;
-use crate::protocol::PROTOCOL_VERSION;
+use crate::protocol::SUPPORTED_PROTOCOL_VERSIONS;
 use crate::workspace::{Workspace, WorkspaceError};
 use serde::de::{self, SeqAccess, Visitor};
 use serde::ser::Serializer;
@@ -363,7 +363,7 @@ fn validate_journal(workspace: &Workspace, path: &std::path::Path) -> Result<Jou
     }
     let journal: Journal =
         serde_json::from_slice(&bytes).map_err(|error| format!("invalid JSON: {error}"))?;
-    if journal.protocol_version != PROTOCOL_VERSION {
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&journal.protocol_version.as_str()) {
         return Err("unsupported journal protocol version".into());
     }
     if journal.transaction_id.is_empty()
@@ -465,6 +465,7 @@ fn safe_id(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::PROTOCOL_VERSION;
     use tempfile::TempDir;
 
     fn journal_for(workspace: &Workspace, transaction_id: &str, entries: Vec<JournalEntry>) {
