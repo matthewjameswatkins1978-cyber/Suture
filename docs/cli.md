@@ -1,6 +1,6 @@
 # Threadmoth CLI
 
-Threadmoth 1.5.1 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
+Threadmoth uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
 
 ## Benchmark commands
 
@@ -23,7 +23,7 @@ threadmoth benchmark -x
 
 Add `--json` (or `-j`) for machine-readable output. Without `--json`, benchmark and torture use the same compact human table and final PASS/FAIL summary.
 
-For compatibility, Threadmoth still accepts:
+For compatibility, Threadmoth still accepts older positional/alias forms such as:
 
 ```text
 threadmoth benchmark tough
@@ -34,7 +34,7 @@ New documentation and automation should prefer the canonical flag forms.
 
 ## Mutation output
 
-Mutation commands continue to return the full JSON certificate by default so existing agent and script integrations do not change behaviour in a patch release:
+Mutation commands return the full JSON certificate by default:
 
 ```text
 threadmoth preview --request request.json
@@ -62,6 +62,38 @@ threadmoth recover --transaction TRANSACTION_ID
 
 The summary shows the outcome, provider, effect size, budget result, newline/preservation facts, hashes, and commit state without dumping the bounded diff. If a declared effect budget is too small, the summary lists the exact minimum values implied by the prepared plan for every undersized numeric dimension. Threadmoth never changes the caller's budget automatically.
 
+## Discovery and refusal recovery
+
+Useful discovery commands include:
+
+```text
+threadmoth capabilities
+threadmoth capabilities --for PATH
+threadmoth examples
+threadmoth schema
+threadmoth suggest PATH
+threadmoth inspect PATH
+threadmoth explain REASON_CODE
+```
+
+A normal agent loop is:
+
+```text
+capabilities / suggest
+        ↓
+preview
+        ↓
+APPLIED or REFUSED
+        ↓
+explain / recover / deliberately disambiguate
+        ↓
+preview again
+        ↓
+mutate
+```
+
+Threadmoth 1.7 extends this model with deterministic guarded candidate selection and broader MCP access to the same read-only discovery surfaces. Protocol 1.2 compatibility carries candidate-selection guards while existing 1.1 request flows remain supported where applicable.
+
 ## Provider naming
 
 `filesystem` is the canonical lifecycle provider name in capabilities, schema output, certificates, and new requests:
@@ -77,7 +109,19 @@ The summary shows the outcome, provider, effect size, budget result, newline/pre
 }
 ```
 
-Threadmoth 1.5.1 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
+The older request spelling `"provider":"file"` remains a compatibility alias in supported protocol versions. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
+
+## MCP
+
+Run the stdio server with:
+
+```text
+threadmoth mcp
+```
+
+The published 1.6 MCP surface includes mutation, preview, capabilities, and transactions. Threadmoth 1.7 adds the read-only tools needed for the full agent workflow, including inspect, suggest, explain, path-specific capabilities, and transaction preview.
+
+MCP is an adapter over the same deterministic core. It does not receive weaker mutation rules than the CLI.
 
 ## Shell completion
 
@@ -132,7 +176,7 @@ threadmoth benchmark --help
 threadmoth capabilities --help
 ```
 
-The existing Threadmoth help-search surface remains available:
+The Threadmoth help-search surface remains available:
 
 ```text
 threadmoth help mutate
@@ -179,4 +223,4 @@ threadmoth doctor
 
 ## Compatibility policy
 
-Threadmoth 1.5.1 keeps the important pre-1.3 spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. They are not the preferred documentation surface, but existing agent scripts do not need an immediate flag-day migration.
+Threadmoth retains important older spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. They are not the preferred documentation surface, but existing agent scripts do not need an immediate flag-day migration.
