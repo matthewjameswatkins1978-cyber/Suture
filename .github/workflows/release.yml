@@ -5,7 +5,24 @@ on:
     tags: ['v*']
 
 jobs:
+  release-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify release tag is contained in main
+        shell: bash
+        run: |
+          git fetch origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Release refused: tag $GITHUB_REF_NAME points to $GITHUB_SHA, which is not contained in main."
+            echo "Merge the release branch into main first, then create the version tag from that release commit."
+            exit 1
+          fi
+
   build:
+    needs: release-source
     strategy:
       matrix:
         include:
@@ -47,7 +64,8 @@ jobs:
           target/${{ matrix.target }}/release/${{ matrix.binary }} completions fish > package/completions/threadmoth.fish
           target/${{ matrix.target }}/release/${{ matrix.binary }} manpage --output package/threadmoth.1
           test -s package/${{ matrix.binary }}
-          test "$(package/${{ matrix.binary }} --version)" = "threadmoth 1.7.0"
+          expected="threadmoth ${GITHUB_REF_NAME#v}"
+          test "$(package/${{ matrix.binary }} --version)" = "$expected"
           tar -czf ${{ matrix.artifact }}.tar.gz -C package .
       - name: Package Windows
         if: runner.os == 'Windows'
@@ -59,7 +77,8 @@ jobs:
           target/${{ matrix.target }}/release/threadmoth.exe completions powershell | Out-File -Encoding utf8 package/completions/threadmoth.ps1
           target/${{ matrix.target }}/release/threadmoth.exe manpage --output package/threadmoth.1
           if ((Get-Item package/threadmoth.exe).Length -le 0) { throw 'packaged binary is empty' }
-          if ((target/${{ matrix.target }}/release/threadmoth.exe --version) -ne 'threadmoth 1.7.0') { throw 'packaged version mismatch' }
+          $expected = 'threadmoth ' + $env:GITHUB_REF_NAME.TrimStart('v')
+          if ((target/${{ matrix.target }}/release/threadmoth.exe --version) -ne $expected) { throw "packaged version mismatch: expected $expected" }
           Compress-Archive -Path package/* -DestinationPath "${{ matrix.artifact }}.zip"
       - name: Checksums Unix
         if: runner.os != 'Windows'
