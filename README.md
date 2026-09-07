@@ -113,6 +113,8 @@ Torture uses the same presentation rather than a separate wall of state messages
 
 Download the platform binary from a GitHub release and put `threadmoth` (or `Threadmoth.exe`) on `PATH`.
 
+The current release is [Threadmoth v1.7.0](https://github.com/matthewjameswatkins1978-cyber/Suture/releases/tag/v1.7.0), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
+
 Building from source requires Rust 1.85 or newer:
 
 ```text
@@ -120,6 +122,39 @@ cargo install threadmoth
 ```
 
 `threadmoth` is the canonical command. The historical `suture` executable is no longer built; use `threadmoth`.
+
+### 30-second agent loop
+
+For MCP clients, use the read-only tools to discover and prepare the edit, then keep preview and commit visibly separate:
+
+```text
+threadmoth_capabilities / threadmoth_suggest
+        ↓
+threadmoth_preview or threadmoth_transact_preview
+        ↓
+APPLIED or REFUSED
+        ↓
+if REFUSED: threadmoth_explain, then choose a returned candidate_selection_id
+        ↓
+preview again with the same expected_pre_hash and candidate_guard
+        ↓
+threadmoth_mutate or threadmoth_transact
+```
+
+The MCP discovery surface is `threadmoth_inspect`, `threadmoth_suggest`, `threadmoth_explain`, and `threadmoth_capabilities`; `threadmoth_preview` and `threadmoth_transact_preview` never write. Ambiguous text and code targets can be selected only with their exact observed file hash, byte offset, and deterministic `selection_id`.
+
+Minimal MCP server configuration:
+
+```json
+{
+  "mcpServers": {
+    "threadmoth": {
+      "command": "threadmoth",
+      "args": ["mcp"]
+    }
+  }
+}
+```
 
 ## CLI that behaves like a proper CLI
 
