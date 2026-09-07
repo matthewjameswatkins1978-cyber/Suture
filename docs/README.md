@@ -6,14 +6,15 @@ Threadmoth is a fast, deterministic structural search-and-rewrite runtime for AI
 
 | Document | Purpose |
 |---|---|
-| [CLI guide](cli.md) | Threadmoth 1.5 commands, desired-state mode, recovery inspection, completion, help and manpage generation |
+| [CLI guide](cli.md) | Commands, desired-state mode, recovery inspection, completion, help and manpage generation |
+| [Agent integration](agent-integration.md) | Minimal instructions and safe usage flow for coding agents and MCP clients |
 | [Architecture](architecture.md) | How Threadmoth separates observation, identification, mutation, verification, and commit |
 | [Protocol](protocol.md) | Request/response contract and machine-facing behaviour |
 | [Provider contract](provider-contract.md) | Rules every mutation provider must obey |
 | [Threat model](threat-model.md) | What Threadmoth protects against, and what it deliberately does not do |
 | [Benchmark report](benchmark-report.md) | Reproducible correctness-first performance evidence |
 | [v1 acceptance](v1-acceptance.md) | Acceptance criteria and release guarantees |
-| [v1.1 discovery](v1.1-discovery.md) | Capability/schema discovery behaviour |
+| [v1.1 discovery](v1.1-discovery.md) | Capability/schema discovery behaviour introduced with protocol 1.1 |
 | [Syntax targeting](syntax-targeting.md) | AST-grounded versus AST-typed source-preserving edits |
 | [Desired state](desired-state.md) | Deterministic desired-state planning and verification |
 | [Distribution ledger](distribution-ledger.md) | Shipped agent integrations, outreach status, metrics, and next gates |
@@ -38,7 +39,7 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-The benchmark checks expected bytes before presenting timing results. The current observed tough-profile run recorded about 14.3 ms for a 1 MB file, about 55.7 ms for 5 MB, and about 291 ms for 32 MB, with zero wrong successful mutations across the profile. Treat these as local measurements, not universal platform claims; see the [benchmark report](benchmark-report.md) for the exact evidence.
+The benchmark checks expected bytes before presenting timing results. Treat reported timings as local measurements, not universal platform claims; see the [benchmark report](benchmark-report.md) and run the checked-in harness on the machine that matters to you.
 
 ## Useful CLI discovery
 
@@ -46,14 +47,18 @@ The benchmark checks expected bytes before presenting timing results. The curren
 threadmoth help
 threadmoth doctor
 threadmoth capabilities
+threadmoth capabilities --for PATH
 threadmoth schema
 threadmoth examples
 threadmoth suggest PATH
+threadmoth inspect PATH
+threadmoth explain REASON_CODE
 threadmoth completions powershell
 threadmoth manpage
+threadmoth mcp
 ```
 
-See the [CLI guide](cli.md) for shell completion and the Threadmoth 1.5 command surface.
+See the [CLI guide](cli.md) for the command surface and [Agent integration](agent-integration.md) for the intended discovery → preview → refusal recovery → commit loop.
 
 For machine integration, mutation output is JSON on stdout, diagnostics are on stderr, and stable exit codes distinguish success/no-change, refusal, and runtime failure.
 
