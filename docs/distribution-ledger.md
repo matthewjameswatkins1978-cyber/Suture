@@ -1,37 +1,43 @@
 # Threadmoth distribution ledger
 
-This is the durable record for Threadmoth discovery work. It records what was
-actually shipped or published, not impressions or unverified reach. Update the
-snapshot and next action after each meaningful external event.
+This is the durable record for Threadmoth discovery work. It records what was actually shipped or published, not impressions or unverified reach. Update the snapshot and next action after each meaningful external event.
 
 ## Snapshot
 
-Date: 2026-09-05  
-Stable release: [Threadmoth 1.5.1](https://github.com/matthewjameswatkins1978-cyber/Suture/releases/tag/v1.5.1)  
+Date: 2026-09-07  
+Stable published release: [Threadmoth 1.6.0](https://github.com/matthewjameswatkins1978-cyber/Suture/releases/tag/v1.6.0)  
+Next release: **Threadmoth 1.7.0 implemented and release-gated locally; publication pending**  
 Repository: [matthewjameswatkins1978-cyber/Suture](https://github.com/matthewjameswatkins1978-cyber/Suture)  
 Repository slug: still `/Suture`; no slug rename is part of this distribution pass.
 
-At snapshot time GitHub reported 0 stars, 0 forks, and 0 watchers. The v1.5.1
-release and CI workflows were green. Release asset download counters were
-small (mostly 1–2 per asset) and are not treated as unique installations.
+The earlier adoption snapshot reported 0 stars, 0 forks, and 0 watchers, with release asset download counters mostly in the 1–2 range. Those figures are historical observations rather than live installation counts and should not be treated as current metrics without a fresh GitHub check.
 
 ## Shipped in the repository
 
 | Target | Artifact | Status | Validation |
 |---|---|---|---|
-| Portable Agent Skills | [`skills/threadmoth/SKILL.md`](../skills/threadmoth/SKILL.md) | Shipped in this change | Agent Skills frontmatter and progressive-disclosure requirements checked |
-| Claude Code | [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) plus the shared skill | Shipped in this change | Standard plugin layout and manifest shape checked against Claude Code docs |
-| Gemini CLI | [`gemini-extension.json`](../gemini-extension.json), [`GEMINI.md`](../GEMINI.md), shared skill | Shipped in this change | Root manifest, context file, and bundled skill layout checked against Gemini CLI docs |
+| Portable Agent Skills | [`skills/threadmoth/SKILL.md`](../skills/threadmoth/SKILL.md) | Shipped | Agent Skills frontmatter and progressive-disclosure requirements checked |
+| Claude Code | [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) plus the shared skill | Shipped | Standard plugin layout and manifest shape checked against Claude Code docs |
+| Gemini CLI | [`gemini-extension.json`](../gemini-extension.json), [`GEMINI.md`](../GEMINI.md), shared skill | Shipped | Root manifest, context file, and bundled skill layout checked against Gemini CLI docs |
 
-All adapters require the user-installed `threadmoth` executable on PATH. They
-do not install a binary, start an MCP server, grant permissions, or silently
-replace other editing tools.
+All adapters require the user-installed `threadmoth` executable on PATH. They do not install a binary, start an MCP server, grant permissions, or silently replace other editing tools.
+
+## Release/distribution improvements prepared in 1.7
+
+- MCP exposes more of Threadmoth's existing read-only discovery and recovery surfaces.
+- Deterministic guarded candidate selection gives agents a safe way to choose one genuinely ambiguous occurrence against an exact observed file state.
+- Refusal recovery preserves provider semantics rather than falling back to generic text edits.
+- Filename/provider detection covers more common real-world filenames without fuzzy language guessing.
+- Release automation adds macOS Apple Silicon and Intel targets alongside Windows and Linux.
+- Agent documentation includes a short discovery → preview → refusal recovery → commit workflow.
+
+These are not marked as published until the 1.7 release is actually tagged and shipped.
 
 ## Existing outreach
 
 | Target | Fit/action | Link | Status / moderation | Replies or evidence | Next action |
 |---|---|---|---|---|---|
-| GitHub field testers | Canonical feedback route | [Issue #24](https://github.com/matthewjameswatkins1978-cyber/Suture/issues/24) | Open | No substantive external tester report at snapshot | Point agents to the skill, challenge, and issue |
+| GitHub field testers | Canonical feedback route | [Issue #24](https://github.com/matthewjameswatkins1978-cyber/Suture/issues/24) | Open | No substantive external tester report recorded at the earlier snapshot | Point agents to the skill, challenge, and issue |
 | DEV | Technical article | [Article](https://dev.to/matmusmeows/threadmoth-a-deterministic-source-preserving-mutation-boundary-for-ai-coding-agents-2a2g) | Live | No measured external feedback recorded | Publish the refusal/ambiguity follow-up only after review |
 | Reddit r/ChatGPTCoding | Weekly self-promotion | [Post/comment](https://www.reddit.com/r/ChatGPTCoding/comments/1w372gj/comment/p7ui0gt/) | Existing outreach | No substantive tester report | Do not duplicate; answer genuine replies |
 | Reddit r/opensource | Project introduction | [Post](https://www.reddit.com/r/opensource/comments/1w7fivf/threadmoth_deterministic_file_mutation_for_ai/) | Existing outreach | No substantive tester report | Do not duplicate; answer genuine replies |
@@ -54,9 +60,4 @@ replace other editing tools.
 
 ## Slug audit
 
-Keeping `/Suture` is technically functional but creates a discoverability and
-trust mismatch for a project now called Threadmoth. Renaming the repository is
-not included here because it would touch clone URLs, cargo-install examples,
-release links, package metadata, existing outreach, and future extension
-install sources. Revisit the slug after the adapter and field-test links have
-settled, with redirects and a link audit prepared first.
+Keeping `/Suture` is technically functional but creates a discoverability and trust mismatch for a project now called Threadmoth. Renaming the repository is not included here because it would touch clone URLs, cargo-install examples, release links, package metadata, existing outreach, and future extension install sources. Revisit the slug after the adapter and field-test links have settled, with redirects and a link audit prepared first.
