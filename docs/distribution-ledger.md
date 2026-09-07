@@ -5,10 +5,11 @@ This is the durable record for Threadmoth discovery work. It records what was ac
 ## Snapshot
 
 Date: 2026-09-07  
-Stable published release: [Threadmoth 1.6.0](https://github.com/matthewjameswatkins1978-cyber/Suture/releases/tag/v1.6.0)  
-Next release: **Threadmoth 1.7.0 implemented and release-gated locally; publication pending**  
+Stable published release: [Threadmoth 1.7.0](https://github.com/matthewjameswatkins1978-cyber/Suture/releases/tag/v1.7.0)  
 Repository: [matthewjameswatkins1978-cyber/Suture](https://github.com/matthewjameswatkins1978-cyber/Suture)  
 Repository slug: still `/Suture`; no slug rename is part of this distribution pass.
+
+Threadmoth 1.7.0 is published with release artifacts for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. `main` now contains the 1.7.0 release line and is the release branch of record.
 
 The earlier adoption snapshot reported 0 stars, 0 forks, and 0 watchers, with release asset download counters mostly in the 1–2 range. Those figures are historical observations rather than live installation counts and should not be treated as current metrics without a fresh GitHub check.
 
@@ -22,7 +23,7 @@ The earlier adoption snapshot reported 0 stars, 0 forks, and 0 watchers, with re
 
 All adapters require the user-installed `threadmoth` executable on PATH. They do not install a binary, start an MCP server, grant permissions, or silently replace other editing tools.
 
-## Release/distribution improvements prepared in 1.7
+## Shipped in 1.7
 
 - MCP exposes more of Threadmoth's existing read-only discovery and recovery surfaces.
 - Deterministic guarded candidate selection gives agents a safe way to choose one genuinely ambiguous occurrence against an exact observed file state.
@@ -30,8 +31,7 @@ All adapters require the user-installed `threadmoth` executable on PATH. They do
 - Filename/provider detection covers more common real-world filenames without fuzzy language guessing.
 - Release automation adds macOS Apple Silicon and Intel targets alongside Windows and Linux.
 - Agent documentation includes a short discovery → preview → refusal recovery → commit workflow.
-
-These are not marked as published until the 1.7 release is actually tagged and shipped.
+- The release workflow now refuses to publish a version tag whose commit is not already contained in `main`, and package version smoke checks derive the expected version from the tag rather than hard-coding a release number.
 
 ## Existing outreach
 
