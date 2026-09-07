@@ -23,6 +23,7 @@ fn request(path: &str, operation: OperationPayload) -> Request {
         namespace: Default::default(),
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Default::default(),
         budget: EffectBudget {
             allowed_path_prefixes: Vec::new(),
@@ -146,7 +147,7 @@ fn recovery_inspection_is_read_only_and_classifies_members() {
 fn oversized_transaction_journal_is_refused_before_commit() {
     let temp = TempDir::new().unwrap();
     let workspace = Workspace::new(temp.path()).unwrap();
-    let original = vec![b'a'; 2 * 1024 * 1024];
+    let original = vec![b'a'; 4 * 1024 * 1024];
     let mut desired = original.clone();
     let final_byte = desired.len() - 1;
     desired[final_byte] = b'b';

@@ -1,9 +1,12 @@
 #![forbid(unsafe_code)]
 
 use crate::engine::compute_sha256;
-use crate::protocol::PROTOCOL_VERSION;
+use crate::protocol::SUPPORTED_PROTOCOL_VERSIONS;
 use crate::workspace::{Workspace, WorkspaceError};
+use serde::de::{self, SeqAccess, Visitor};
+use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
 use std::io;
 
@@ -24,13 +27,17 @@ pub struct JournalEntry {
     pub path: String,
     pub pre_hash: String,
     pub candidate_hash: String,
+    // New journals use compact base64 strings. The custom deserializer also
+    // accepts the v1.5.1 decimal arrays so upgrades remain recoverable.
+    #[serde(with = "base64_bytes")]
     pub original: Vec<u8>,
+    #[serde(with = "base64_bytes")]
     pub candidate: Vec<u8>,
 }
 
 fn serialize_journal(journal: &Journal) -> Result<Vec<u8>, WorkspaceError> {
-    let bytes = serde_json::to_vec_pretty(journal)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let bytes =
+        serde_json::to_vec(journal).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     if bytes.len() > MAX_JOURNAL_BYTES {
         return Err(WorkspaceError::ResourceLimit {
             dimension: "max_journal_bytes".into(),
@@ -356,7 +363,7 @@ fn validate_journal(workspace: &Workspace, path: &std::path::Path) -> Result<Jou
     }
     let journal: Journal =
         serde_json::from_slice(&bytes).map_err(|error| format!("invalid JSON: {error}"))?;
-    if journal.protocol_version != PROTOCOL_VERSION {
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&journal.protocol_version.as_str()) {
         return Err("unsupported journal protocol version".into());
     }
     if journal.transaction_id.is_empty()
@@ -458,6 +465,7 @@ fn safe_id(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::PROTOCOL_VERSION;
     use tempfile::TempDir;
 
     fn journal_for(workspace: &Workspace, transaction_id: &str, entries: Vec<JournalEntry>) {
@@ -577,13 +585,19 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let workspace = Workspace::new(temp.path()).unwrap();
         workspace.write_file_atomic("x.txt", b"new").unwrap();
-        let journal = Journal {
-            protocol_version: "1.1.0".into(),
-            transaction_id: "legacy".into(),
-            entries: vec![entry("x.txt", b"old", b"new")],
-        };
         let legacy = temp.path().join(LEGACY_RECOVERY_DIR);
         fs::create_dir_all(&legacy).unwrap();
+        let journal = serde_json::json!({
+            "protocol_version": "1.1.0",
+            "transaction_id": "legacy",
+            "entries": [{
+                "path": "x.txt",
+                "pre_hash": compute_sha256(b"old"),
+                "candidate_hash": compute_sha256(b"new"),
+                "original": [111, 108, 100],
+                "candidate": [110, 101, 119]
+            }]
+        });
         fs::write(
             legacy.join("legacy.json"),
             serde_json::to_vec_pretty(&journal).unwrap(),
@@ -602,7 +616,7 @@ mod tests {
     fn oversized_journal_is_refused_before_creating_recovery_state() {
         let temp = TempDir::new().unwrap();
         let workspace = Workspace::new(temp.path()).unwrap();
-        let payload = vec![b'a'; 2 * 1024 * 1024];
+        let payload = vec![b'a'; 4 * 1024 * 1024];
         let error = write_journal(
             &workspace,
             &Journal {
@@ -624,5 +638,186 @@ mod tests {
                 && actual > limit
         ));
         assert!(!temp.path().join(RECOVERY_DIR).exists());
+    }
+
+    #[test]
+    fn one_megabyte_binary_journal_fits_without_decimal_array_expansion() {
+        let payload: Vec<u8> = (0..1_048_576).map(|index| (index % 256) as u8).collect();
+        let journal = Journal {
+            protocol_version: PROTOCOL_VERSION.into(),
+            transaction_id: "one-megabyte".into(),
+            entries: vec![entry("x.bin", &payload, &payload)],
+        };
+
+        let encoded = serialize_journal(&journal).unwrap();
+        assert!(encoded.len() < 4 * 1024 * 1024);
+        let encoded_text = String::from_utf8(encoded.clone()).unwrap();
+        assert!(encoded_text.contains("\"original\":\""));
+        assert!(!encoded_text.contains("\"original\":["));
+        check_journal_size(&journal).unwrap();
+    }
+
+    #[test]
+    fn journal_round_trip_preserves_arbitrary_binary_bytes() {
+        let original = vec![0, 1, 2, 127, 128, 254, 255];
+        let candidate = vec![255, 0, 17, 200, 128, 3];
+        let journal = Journal {
+            protocol_version: PROTOCOL_VERSION.into(),
+            transaction_id: "binary-round-trip".into(),
+            entries: vec![entry("x.bin", &original, &candidate)],
+        };
+
+        let decoded: Journal =
+            serde_json::from_slice(&serialize_journal(&journal).unwrap()).unwrap();
+        assert_eq!(decoded.entries[0].original, original);
+        assert_eq!(decoded.entries[0].candidate, candidate);
+    }
+
+    #[test]
+    fn journal_sizes_remain_bounded_for_representative_payloads() {
+        for size in [100 * 1024, 500 * 1024, 1024 * 1024] {
+            let payload = vec![0; size];
+            let journal = Journal {
+                protocol_version: PROTOCOL_VERSION.into(),
+                transaction_id: format!("size-{size}"),
+                entries: vec![entry("x.bin", &payload, &payload)],
+            };
+            let encoded = serialize_journal(&journal).unwrap();
+            assert!(encoded.len() < MAX_JOURNAL_BYTES);
+            let decoded: Journal = serde_json::from_slice(&encoded).unwrap();
+            assert_eq!(decoded.entries[0].original, payload);
+        }
+    }
+
+    #[test]
+    fn legacy_decimal_array_journal_remains_recoverable() {
+        let legacy = serde_json::json!({
+            "protocol_version": PROTOCOL_VERSION,
+            "transaction_id": "legacy-array",
+            "entries": [{
+                "path": "x.bin",
+                "pre_hash": compute_sha256(&[0, 255]),
+                "candidate_hash": compute_sha256(&[1, 128]),
+                "original": [0, 255],
+                "candidate": [1, 128]
+            }]
+        });
+        let decoded: Journal = serde_json::from_value(legacy).unwrap();
+        assert_eq!(decoded.entries[0].original, vec![0, 255]);
+        assert_eq!(decoded.entries[0].candidate, vec![1, 128]);
+    }
+}
+
+mod base64_bytes {
+    use super::*;
+
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&encode(bytes))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct BytesVisitor;
+
+        impl<'de> Visitor<'de> for BytesVisitor {
+            type Value = Vec<u8>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a base64 string or legacy byte array")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                decode(value).map_err(E::custom)
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut bytes = Vec::new();
+                while let Some(byte) = sequence.next_element::<u8>()? {
+                    bytes.push(byte);
+                }
+                Ok(bytes)
+            }
+        }
+
+        deserializer.deserialize_any(BytesVisitor)
+    }
+
+    fn encode(bytes: &[u8]) -> String {
+        let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let first = chunk[0] as usize;
+            let second = chunk.get(1).copied().unwrap_or_default() as usize;
+            let third = chunk.get(2).copied().unwrap_or_default() as usize;
+            output.push(ALPHABET[first >> 2] as char);
+            output.push(ALPHABET[((first & 0x03) << 4) | (second >> 4)] as char);
+            output.push(if chunk.len() > 1 {
+                ALPHABET[((second & 0x0f) << 2) | (third >> 6)] as char
+            } else {
+                '='
+            });
+            output.push(if chunk.len() > 2 {
+                ALPHABET[third & 0x3f] as char
+            } else {
+                '='
+            });
+        }
+        output
+    }
+
+    fn decode(value: &str) -> Result<Vec<u8>, &'static str> {
+        let input = value.as_bytes();
+        if input.len() % 4 != 0 {
+            return Err("base64 length is not a multiple of four");
+        }
+        let mut output = Vec::with_capacity(input.len() / 4 * 3);
+        for (chunk_index, chunk) in input.chunks(4).enumerate() {
+            let last = chunk_index + 1 == input.len() / 4;
+            let a = value_of(chunk[0]).ok_or("invalid base64 character")?;
+            let b = value_of(chunk[1]).ok_or("invalid base64 character")?;
+            let c = if chunk[2] == b'=' {
+                if !last || chunk[3] != b'=' {
+                    return Err("invalid base64 padding");
+                }
+                0
+            } else {
+                value_of(chunk[2]).ok_or("invalid base64 character")?
+            };
+            let d = if chunk[3] == b'=' {
+                if !last {
+                    return Err("invalid base64 padding");
+                }
+                0
+            } else {
+                value_of(chunk[3]).ok_or("invalid base64 character")?
+            };
+            output.push((a << 2 | b >> 4) as u8);
+            if chunk[2] != b'=' {
+                output.push((b << 4 | c >> 2) as u8);
+            }
+            if chunk[3] != b'=' {
+                output.push((c << 6 | d) as u8);
+            }
+        }
+        Ok(output)
+    }
+
+    fn value_of(byte: u8) -> Option<u32> {
+        ALPHABET
+            .iter()
+            .position(|value| *value == byte)
+            .map(|value| value as u32)
     }
 }

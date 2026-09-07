@@ -148,6 +148,68 @@ impl TextProvider {
             })
             .collect())
     }
+
+    /// Plan one already-selected physical occurrence. The caller must have
+    /// verified the source identity and candidate selection before calling
+    /// this method; this method still checks that the bytes at the guarded
+    /// range are the requested target.
+    pub fn plan_at(
+        content: &[u8],
+        op: &TextOperation,
+        start: usize,
+        end: usize,
+    ) -> Result<Vec<ByteEdit>, TextProviderError> {
+        let (target, replacement, placement) = match op {
+            TextOperation::Replace {
+                target,
+                replacement,
+            }
+            | TextOperation::Set {
+                target,
+                replacement,
+            }
+            | TextOperation::Rename {
+                target,
+                replacement,
+            } => (
+                target.as_bytes(),
+                replacement.as_bytes(),
+                Placement::Replace,
+            ),
+            TextOperation::Delete { target }
+            | TextOperation::EnsureAbsent { target }
+            | TextOperation::Unset { target } => (target.as_bytes(), &[][..], Placement::Replace),
+            TextOperation::InsertBefore { target, content } => {
+                (target.as_bytes(), content.as_bytes(), Placement::Before)
+            }
+            TextOperation::InsertAfter { target, content } => {
+                (target.as_bytes(), content.as_bytes(), Placement::After)
+            }
+            TextOperation::Move { .. } | TextOperation::EnsurePresent { .. } => {
+                return Err(TextProviderError::Refused(
+                    RefusalReason::UnsupportedOperation {
+                        operation: "candidate guard is not available for this text operation"
+                            .into(),
+                    },
+                ))
+            }
+        };
+        if target.is_empty() || start > end || end > content.len() || &content[start..end] != target
+        {
+            return Err(TextProviderError::Refused(
+                RefusalReason::CandidateSelectionInvalid {
+                    offset: start,
+                    selection_id: String::new(),
+                    details: "guarded range does not contain the exact requested target".into(),
+                },
+            ));
+        }
+        Ok(vec![ByteEdit {
+            start,
+            end,
+            replacement: build_replacement(target, replacement, placement),
+        }])
+    }
 }
 
 fn plan_ensure_present(content: &[u8], wanted: &str) -> Result<Vec<ByteEdit>, TextProviderError> {
@@ -365,9 +427,14 @@ fn candidate_diagnostics(content: &[u8], target: &[u8], matches: &[usize]) -> Ve
             let context_end = (offset + target.len() + 24).min(content.len());
             Candidate {
                 offset,
+                start: offset,
+                end: offset + target.len(),
+                target: String::from_utf8_lossy(target).into_owned(),
                 line: memchr_iter(b'\n', &content[..offset]).count() + 1,
                 context: String::from_utf8_lossy(&content[context_start..context_end]).into_owned(),
                 anchor_sha256: compute_sha256(&content[offset..offset + target.len()]),
+                selection_id: String::new(),
+                node_kind: None,
             }
         })
         .collect()

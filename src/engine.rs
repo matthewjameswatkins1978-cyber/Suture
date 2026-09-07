@@ -85,14 +85,6 @@ pub fn apply_byte_edits(original: &[u8], edits: &[ByteEdit]) -> Result<Vec<u8>, 
     Ok(result)
 }
 
-pub fn generate_diff(original: &[u8], modified: &[u8]) -> String {
-    let orig_str = String::from_utf8_lossy(original);
-    let mod_str = String::from_utf8_lossy(modified);
-
-    let diff = similar::TextDiff::from_lines(&orig_str, &mod_str);
-    diff.unified_diff().to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,14 +191,5 @@ mod tests {
         let result = apply_byte_edits(original, &edits).unwrap();
         assert_eq!(result, b"a123456f");
         assert_eq!(result.len(), 8);
-    }
-
-    #[test]
-    fn test_generate_diff() {
-        let orig = b"line 1\nline 2\n";
-        let mod_bytes = b"line 1\nline two\n";
-        let diff = generate_diff(orig, mod_bytes);
-        assert!(diff.contains("-line 2"));
-        assert!(diff.contains("+line two"));
     }
 }

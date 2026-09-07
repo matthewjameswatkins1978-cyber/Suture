@@ -280,6 +280,10 @@ pub fn plan(
         node_kind,
         &mut found,
     );
+    if node_kind.is_none() {
+        found.sort_unstable_by_key(|(start, end, _)| (*start, *end));
+        found.dedup_by_key(|(start, end, _)| (*start, *end));
+    }
     if found.len() != 1 {
         return Err(SyntaxError::Refused(if found.is_empty() {
             RefusalReason::MissingTarget {
@@ -292,20 +296,103 @@ pub fn plan(
                 candidates: found
                     .iter()
                     .take(8)
-                    .map(|(start, end, _)| Candidate {
+                    .map(|(start, end, kind)| Candidate {
                         offset: *start,
+                        start: *start,
+                        end: *end,
+                        target: target.into(),
                         line: content[..*start].iter().filter(|b| **b == b'\n').count() + 1,
                         context: String::from_utf8_lossy(
                             &content[start.saturating_sub(24)..(*end + 24).min(content.len())],
                         )
                         .into(),
                         anchor_sha256: crate::engine::compute_sha256(&content[*start..*end]),
+                        selection_id: String::new(),
+                        node_kind: Some(kind.clone()),
                     })
                     .collect(),
             }
         }));
     }
     let (start, end, kind) = found.remove(0);
+    let replacement = match placement {
+        Placement::Replace => replacement.to_vec(),
+        Placement::Before => [replacement, &content[start..end]].concat(),
+        Placement::After => [&content[start..end], replacement].concat(),
+    };
+    Ok(SyntaxPlan {
+        edits: vec![ByteEdit {
+            start,
+            end,
+            replacement,
+        }],
+        language: spec.id,
+        node_kind: kind,
+        targeting: if node_kind.is_some() {
+            StructuralTargeting::AstTyped
+        } else {
+            StructuralTargeting::AstGrounded
+        },
+    })
+}
+
+/// Plan one physical syntax-node occurrence selected from a refusal
+/// certificate. The core performs the file-identity and selection-ID checks;
+/// this function re-parses the unchanged bytes and re-validates the exact
+/// node span before returning an edit.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_at(
+    content: &[u8],
+    language_name: &str,
+    target: &str,
+    replacement: &[u8],
+    placement: Placement,
+    node_kind: Option<&str>,
+    family: LanguageFamily,
+    start: usize,
+    end: usize,
+) -> Result<SyntaxPlan, SyntaxError> {
+    let Some(spec) = lookup(language_name) else {
+        return Err(SyntaxError::Refused(
+            RefusalReason::ProviderCapabilityMissing {
+                provider: "syntax".into(),
+                capability: format!("language grammar: {language_name}"),
+            },
+        ));
+    };
+    if spec.family != family || start > end || end > content.len() {
+        return Err(SyntaxError::Refused(
+            RefusalReason::CandidateSelectionInvalid {
+                offset: start,
+                selection_id: String::new(),
+                details: "candidate span is outside the selected syntax provider".into(),
+            },
+        ));
+    }
+    let tree = parse(content, spec)?;
+    let mut found = Vec::new();
+    collect_nodes(
+        tree.root_node(),
+        content,
+        target.as_bytes(),
+        node_kind,
+        &mut found,
+    );
+    found.sort_unstable_by_key(|(node_start, node_end, _)| (*node_start, *node_end));
+    found.dedup_by_key(|(node_start, node_end, _)| (*node_start, *node_end));
+    let Some((_, _, kind)) = found
+        .iter()
+        .find(|(node_start, node_end, _)| *node_start == start && *node_end == end)
+        .cloned()
+    else {
+        return Err(SyntaxError::Refused(
+            RefusalReason::CandidateSelectionInvalid {
+                offset: start,
+                selection_id: String::new(),
+                details: "candidate span no longer identifies the requested syntax node".into(),
+            },
+        ));
+    };
     let replacement = match placement {
         Placement::Replace => replacement.to_vec(),
         Placement::Before => [replacement, &content[start..end]].concat(),
@@ -446,6 +533,51 @@ mod tests {
             validate_registry(&ambiguous_extension),
             Err("ambiguous extension")
         );
+    }
+
+    #[test]
+    fn python_same_span_wrappers_are_one_physical_candidate() {
+        let plan = plan(
+            b"value = 1\n",
+            "python",
+            "value = 1",
+            b"value = 2",
+            Placement::Replace,
+            None,
+            LanguageFamily::Code,
+            &Cardinality::ExactlyOne,
+        )
+        .expect("same source span must not be false ambiguity");
+
+        assert_eq!(plan.edits.len(), 1);
+        assert_eq!(plan.edits[0].start, 0);
+        assert_eq!(plan.edits[0].end, 9);
+    }
+
+    #[test]
+    fn distinct_identical_python_targets_remain_ambiguous() {
+        let error = plan(
+            b"value = 1\nvalue = 1\n",
+            "python",
+            "value = 1",
+            b"value = 2",
+            Placement::Replace,
+            None,
+            LanguageFamily::Code,
+            &Cardinality::ExactlyOne,
+        )
+        .unwrap_err();
+
+        match error {
+            SyntaxError::Refused(RefusalReason::DuplicateTarget {
+                count, candidates, ..
+            }) => {
+                assert_eq!(count, 2);
+                assert_eq!(candidates.len(), 2);
+                assert_ne!(candidates[0].offset, candidates[1].offset);
+            }
+            other => panic!("expected real ambiguity, got {other:?}"),
+        }
     }
 
     #[test]

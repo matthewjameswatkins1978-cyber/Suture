@@ -12,8 +12,12 @@ use crate::provider::web::WebOperation;
 use crate::provider::yaml::YamlOperation;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-pub const PROTOCOL_VERSION: &str = "1.1.0";
+pub const PROTOCOL_VERSION: &str = "1.2.0";
+pub const LEGACY_PROTOCOL_VERSION: &str = "1.1.0";
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[PROTOCOL_VERSION, LEGACY_PROTOCOL_VERSION];
+pub const CANDIDATE_SELECTION_DOMAIN: &str = "threadmoth:candidate-selection:v1";
 pub const MAX_REQUEST_BYTES: usize = 1_048_576;
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_TRANSACTION_REQUESTS: usize = 256;
@@ -65,10 +69,19 @@ pub struct Request {
     #[serde(default)]
     pub region_guard: Option<RegionGuard>,
     #[serde(default)]
+    pub candidate_guard: Option<CandidateGuard>,
+    #[serde(default)]
     pub cardinality: Cardinality,
     #[serde(default)]
     pub budget: EffectBudget,
     pub operation: OperationPayload,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateGuard {
+    pub offset: usize,
+    pub selection_id: String,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
@@ -224,6 +237,11 @@ pub enum RefusalReason {
     UnmappablePath {
         path: String,
     },
+    CandidateSelectionInvalid {
+        offset: usize,
+        selection_id: String,
+        details: String,
+    },
 }
 
 impl RefusalReason {
@@ -251,6 +269,7 @@ impl RefusalReason {
             Self::BinaryInput => "BINARY_INPUT",
             Self::DestinationExists { .. } => "DESTINATION_EXISTS",
             Self::UnmappablePath { .. } => "PATH_UNMAPPABLE",
+            Self::CandidateSelectionInvalid { .. } => "CANDIDATE_SELECTION_INVALID",
         }
     }
 }
@@ -259,9 +278,34 @@ impl RefusalReason {
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub offset: usize,
+    #[serde(default)]
+    pub start: usize,
+    #[serde(default)]
+    pub end: usize,
+    #[serde(default)]
+    pub target: String,
     pub line: usize,
     pub context: String,
     pub anchor_sha256: String,
+    #[serde(default)]
+    pub selection_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_kind: Option<String>,
+}
+
+pub fn candidate_selection_id(
+    pre_hash: &str,
+    provider: &str,
+    start: usize,
+    end: usize,
+    target_sha256: &str,
+) -> String {
+    let canonical = format!(
+        "{CANDIDATE_SELECTION_DOMAIN}\npre_hash={pre_hash}\nstart={start}\nend={end}\nprovider={provider}\ntarget_sha256={target_sha256}\n"
+    );
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]

@@ -6,11 +6,12 @@
 
 use crate::engine::compute_sha256;
 use crate::lifecycle::FileOperation;
-use crate::path::PathNamespace;
+use crate::path::{PathNamespace, PathNormalizer};
 use crate::pattern::PatternOperation;
 use crate::protocol::{
-    Cardinality, EffectBudget, OperationPayload, Request, TransactionRequest, MAX_FILE_BYTES,
-    MAX_REQUEST_BYTES, MAX_TRANSACTION_REQUESTS, PROTOCOL_VERSION,
+    CandidateGuard, Cardinality, EffectBudget, OperationPayload, Request, TransactionRequest,
+    MAX_FILE_BYTES, MAX_REQUEST_BYTES, MAX_TRANSACTION_REQUESTS, PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
 };
 use crate::provider::code::CodeOperation;
 use crate::provider::dotenv::DotenvOperation;
@@ -21,6 +22,7 @@ use crate::provider::text::TextOperation;
 use crate::provider::toml::{TomlOperation, TomlValueWrapper};
 use crate::provider::web::WebOperation;
 use crate::provider::yaml::YamlOperation;
+use crate::workspace::Workspace;
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -649,6 +651,14 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
         ["suggest", "preview"]
     );
     reason!(
+        "CANDIDATE_SELECTION_INVALID",
+        "The supplied candidate identity did not select one reported physical occurrence.",
+        "Candidate selection is bound to the exact observed file hash, span and provider.",
+        "refresh_candidate_identity",
+        false,
+        ["inspect", "preview", "explain"]
+    );
+    reason!(
         "STALE_IDENTITY",
         "The accepted source or guarded region changed.",
         "The request no longer describes the state being mutated.",
@@ -864,8 +874,8 @@ pub fn capabilities() -> CapabilityManifest {
     let operations = operation_metadata();
     let reason_codes = reason_metadata();
     let value = json!({
-        "format_version": "1.1",
-        "protocol_versions": [PROTOCOL_VERSION],
+        "format_version": "1.2",
+        "protocol_versions": SUPPORTED_PROTOCOL_VERSIONS,
         "protocol_version": PROTOCOL_VERSION,
         "threadmoth_version": env!("CARGO_PKG_VERSION"),
         "providers": providers,
@@ -889,8 +899,8 @@ pub fn capabilities() -> CapabilityManifest {
     });
     let capability_set_id = digest_without_id(&value);
     CapabilityManifest {
-        format_version: "1.1",
-        protocol_versions: vec![PROTOCOL_VERSION],
+        format_version: "1.2",
+        protocol_versions: SUPPORTED_PROTOCOL_VERSIONS.to_vec(),
         protocol_version: PROTOCOL_VERSION,
         threadmoth_version: env!("CARGO_PKG_VERSION"),
         capability_set_id,
@@ -1033,6 +1043,34 @@ pub fn capabilities_for(path: &str, bytes: Option<&[u8]>) -> Value {
             .into();
     }
     value
+}
+
+/// Return the canonical read-only identity facts used by both the CLI and
+/// MCP discovery surfaces.
+pub fn inspect(workspace: &Workspace, path: &str) -> Result<Value, String> {
+    let normalized = PathNormalizer::normalize(path, &PathNamespace::Native);
+    let resolved = workspace
+        .resolve_namespaced_path(path, &PathNamespace::Native)
+        .map_err(|error| error.to_string())?;
+    let bytes = workspace
+        .read_file(&resolved)
+        .map_err(|error| error.to_string())?;
+    let newline = if bytes.windows(2).any(|window| window == b"\r\n") {
+        "crlf"
+    } else if bytes.contains(&b'\n') {
+        "lf"
+    } else {
+        "none"
+    };
+    Ok(json!({
+        "protocol_version": PROTOCOL_VERSION,
+        "file_path": normalized,
+        "bytes": bytes.len(),
+        "sha256": compute_sha256(&bytes),
+        "encoding": if bytes.starts_with(&[0xef, 0xbb, 0xbf]) { "utf8_bom" } else { "utf8" },
+        "newline_profile": newline,
+        "final_newline": bytes.ends_with(b"\n")
+    }))
 }
 
 fn digest_without_id(value: &Value) -> String {
@@ -1281,6 +1319,7 @@ fn base_request(path: &str, operation: OperationPayload) -> Request {
         namespace: PathNamespace::Native,
         expected_pre_hash: None,
         region_guard: None,
+        candidate_guard: None,
         cardinality: Cardinality::ExactlyOne,
         budget: EffectBudget {
             max_files: Some(1),
@@ -1416,6 +1455,24 @@ pub fn detect_provider(path: &str, bytes: Option<&[u8]>) -> (String, String, Vec
         );
     }
     let lower = path.to_ascii_lowercase();
+    let file_name = std::path::Path::new(&lower)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    if file_name == ".env" || file_name.starts_with(".env.") {
+        return (
+            "dotenv".into(),
+            "recognized .env filename family".into(),
+            Vec::new(),
+        );
+    }
+    if matches!(file_name, "dockerfile" | "makefile" | "gnumakefile") {
+        return (
+            "text".into(),
+            "recognized deterministic build filename".into(),
+            Vec::new(),
+        );
+    }
     let extension = std::path::Path::new(&lower)
         .extension()
         .and_then(|value| value.to_str())
@@ -1766,25 +1823,108 @@ pub fn refusal_recovery(certificate: &crate::protocol::Certificate) -> Value {
         certificate.refusal_reason.as_ref()
     {
         for candidate in candidates {
-            let request = base_request(
-                &certificate.file_path,
-                OperationPayload::Text(TextOperation::Replace {
-                    target: candidate.context.clone(),
-                    replacement: "REPLACEMENT".into(),
-                }),
-            );
-            suggestions.push(json!({"file_path": certificate.file_path, "provider": certificate.provider, "selector": candidate.context, "candidate_line": candidate.line, "candidate_fingerprint": candidate.anchor_sha256, "request_template": serde_json::to_value(request).expect("recovery request serializes"), "next": "preview this skeleton and confirm the intended candidate"}));
+            let target = if candidate.target.is_empty() {
+                candidate.context.clone()
+            } else {
+                candidate.target.clone()
+            };
+            let request_template = recovery_request(certificate, candidate, &target);
+            suggestions.push(json!({
+                "file_path": certificate.file_path,
+                "provider": certificate.provider,
+                "selector": target,
+                "candidate_line": candidate.line,
+                "candidate_start": candidate.start,
+                "candidate_end": candidate.end,
+                "candidate_fingerprint": candidate.anchor_sha256,
+                "selection_id": candidate.selection_id,
+                "request_template": request_template,
+                "next": if request_template.is_some() { "preview this provider-preserving skeleton and confirm the intended candidate" } else { "retain the original provider request, add this candidate_guard and preview again" }
+            }));
         }
     }
     if suggestions.is_empty() {
-        let request = base_request(
-            &certificate.file_path,
-            OperationPayload::Text(TextOperation::Replace {
-                target: "EXACT_TARGET".into(),
-                replacement: "REPLACEMENT".into(),
-            }),
-        );
-        suggestions.push(json!({"file_path": certificate.file_path, "provider": certificate.provider, "request_template": serde_json::to_value(request).expect("recovery request serializes"), "next": "inspect the target, narrow the selector or explicitly correct the guard/budget"}));
+        suggestions.push(json!({
+            "file_path": certificate.file_path,
+            "provider": certificate.provider,
+            "request_template": recovery_request_without_candidate(certificate),
+            "next": "inspect the target, narrow the selector or explicitly correct the guard/budget",
+            "no_safe_automatic_retry_template": !matches!(certificate.provider.as_str(), "text" | "pattern" | "markdown" | "code" | "web")
+        }));
     }
     json!({"reason_code": reason, "capability_set_id": capabilities().capability_set_id, "source_certificate": certificate.request_id, "suggestions": suggestions, "blocked_reasons": [format!("{reason} must be corrected before retry")], "safe_retry": false})
+}
+
+fn recovery_request(
+    certificate: &crate::protocol::Certificate,
+    candidate: &crate::protocol::Candidate,
+    target: &str,
+) -> Option<Value> {
+    let operation = match certificate.provider.as_str() {
+        "text" => OperationPayload::Text(TextOperation::Replace {
+            target: target.into(),
+            replacement: "REPLACEMENT".into(),
+        }),
+        "pattern" => OperationPayload::Pattern(PatternOperation::Replace {
+            pattern: target.into(),
+            replacement: "REPLACEMENT".into(),
+        }),
+        "code" => OperationPayload::Code(CodeOperation::ReplaceNode {
+            language: "LANGUAGE_REQUIRED".into(),
+            target: target.into(),
+            replacement: "REPLACEMENT".into(),
+            node_kind: candidate.node_kind.clone(),
+        }),
+        "web" => OperationPayload::Web(WebOperation::ReplaceNode {
+            language: "LANGUAGE_REQUIRED".into(),
+            target: target.into(),
+            replacement: "REPLACEMENT".into(),
+            node_kind: candidate.node_kind.clone(),
+        }),
+        "markdown" => OperationPayload::Markdown(
+            crate::provider::markdown::MarkdownOperation::ReplaceListItem {
+                target: target.into(),
+                replacement: "REPLACEMENT".into(),
+            },
+        ),
+        _ => return None,
+    };
+    let mut request = base_request(&certificate.file_path, operation);
+    request.expected_pre_hash =
+        (!certificate.pre_hash.is_empty()).then(|| certificate.pre_hash.clone());
+    request.candidate_guard = (!candidate.selection_id.is_empty()).then(|| CandidateGuard {
+        offset: candidate.offset,
+        selection_id: candidate.selection_id.clone(),
+    });
+    Some(serde_json::to_value(request).expect("recovery request serializes"))
+}
+
+fn recovery_request_without_candidate(certificate: &crate::protocol::Certificate) -> Option<Value> {
+    let operation = match certificate.provider.as_str() {
+        "text" => OperationPayload::Text(TextOperation::Replace {
+            target: "EXACT_TARGET".into(),
+            replacement: "REPLACEMENT".into(),
+        }),
+        "pattern" => OperationPayload::Pattern(PatternOperation::Replace {
+            pattern: "BOUNDED_PATTERN".into(),
+            replacement: "REPLACEMENT".into(),
+        }),
+        "code" => OperationPayload::Code(CodeOperation::ReplaceNode {
+            language: "LANGUAGE_REQUIRED".into(),
+            target: "EXACT_NODE_TEXT".into(),
+            replacement: "REPLACEMENT".into(),
+            node_kind: None,
+        }),
+        "web" => OperationPayload::Web(WebOperation::ReplaceNode {
+            language: "LANGUAGE_REQUIRED".into(),
+            target: "EXACT_NODE_TEXT".into(),
+            replacement: "REPLACEMENT".into(),
+            node_kind: None,
+        }),
+        _ => return None,
+    };
+    Some(
+        serde_json::to_value(base_request(&certificate.file_path, operation))
+            .expect("recovery request serializes"),
+    )
 }
