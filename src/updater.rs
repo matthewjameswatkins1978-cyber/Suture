@@ -232,10 +232,7 @@ fn classify_installation(path: &Path) -> InstallationKind {
         || lower.contains("/opt/homebrew/")
     {
         InstallationKind::HomebrewManaged
-    } else if lower.contains("\\winget\\")
-        || lower.contains("\\windowsapps\\")
-        || lower.contains("\\program files\\threadmoth\\")
-    {
+    } else if lower.contains("\\winget\\") || lower.contains("\\windowsapps\\") {
         InstallationKind::WingetManaged
     } else {
         InstallationKind::Standalone
@@ -511,6 +508,10 @@ mod tests {
         );
         assert_eq!(
             classify_installation(Path::new(r"C:\Tools\threadmoth.exe")),
+            InstallationKind::Standalone
+        );
+        assert_eq!(
+            classify_installation(Path::new(r"C:\Program Files\Threadmoth\threadmoth.exe")),
             InstallationKind::Standalone
         );
     }

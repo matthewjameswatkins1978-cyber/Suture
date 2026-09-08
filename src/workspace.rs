@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -31,11 +32,28 @@ pub enum WorkspaceError {
         limit: usize,
         actual: usize,
     },
+    #[error("workspace mutation lock is held by another Threadmoth process: {lock_path}")]
+    Busy { lock_path: String },
 }
 
 #[derive(Clone, Debug)]
 pub struct Workspace {
     root: PathBuf,
+}
+
+/// A bounded cross-process lock for the complete mutation boundary. The lock
+/// is deliberately a separate file in the workspace root, so an interrupted
+/// process leaves an inspectable, fail-closed busy marker rather than allowing
+/// two Threadmoth writers to proceed concurrently.
+pub struct MutationLock {
+    path: PathBuf,
+    _file: fs::File,
+}
+
+impl Drop for MutationLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 impl Workspace {
@@ -57,6 +75,36 @@ impl Workspace {
     }
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn acquire_mutation_lock(&self) -> Result<MutationLock, WorkspaceError> {
+        let path = self.root.join(".threadmoth-mutation.lock");
+        for attempt in 0..20 {
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    let marker = format!("pid={}\n", std::process::id());
+                    file.write_all(marker.as_bytes())?;
+                    file.sync_all()?;
+                    return Ok(MutationLock { path, _file: file });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    if attempt == 19 {
+                        return Err(WorkspaceError::Busy {
+                            lock_path: path.display().to_string(),
+                        });
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => return Err(WorkspaceError::Io(error)),
+            }
+        }
+        Err(WorkspaceError::Busy {
+            lock_path: path.display().to_string(),
+        })
     }
 
     /// Resolve a caller path in its declared namespace, returning one
@@ -418,7 +466,8 @@ impl Workspace {
 
 fn reject_internal_namespace(path: &str) -> Result<(), WorkspaceError> {
     let normalized = path.replace('\\', "/");
-    if normalized == ".threadmoth-recovery"
+    if normalized == ".threadmoth-mutation.lock"
+        || normalized == ".threadmoth-recovery"
         || normalized.starts_with(".threadmoth-recovery/")
         || normalized == ".suture-recovery"
         || normalized.starts_with(".suture-recovery/")

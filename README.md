@@ -101,7 +101,7 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Threadmoth 1.8.0 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
+Threadmoth 1.8.1 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
 
 ```text
 PASS  8/8 cases · 0 wrong mutations · correctness checked
@@ -113,7 +113,7 @@ Torture uses the same presentation rather than a separate wall of state messages
 
 Download the platform binary from a GitHub release and put `threadmoth` (or `Threadmoth.exe`) on `PATH`.
 
-The current release is [Threadmoth v1.8.0](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.8.0), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
+The current release is [Threadmoth v1.8.1](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.8.1), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
 
 Standalone installations can check and explicitly update from the official GitHub Releases repository:
 
@@ -124,6 +124,22 @@ threadmoth update --yes --json
 ```
 
 The updater accepts stable releases only, selects the exact platform archive, verifies the release manifest SHA-256 and GitHub asset digest when available, checks the extracted executable's version, and replaces the current binary only after those checks pass. Cargo, Homebrew, and WinGet-managed installations are reported rather than overwritten. Mutation commands never access the network; only this explicit maintenance command does.
+
+For the common safe cases, the CLI offers bounded request sugar that still uses
+the same Core guards and refusal rules:
+
+```text
+threadmoth replace-exact config.txt OLD NEW
+threadmoth set-value config.json $.server.port 8080
+threadmoth create-file notes.txt "managed file"
+threadmoth doctor --json
+```
+
+These shorthands authorize one file, one target, and one changed region. They
+refuse ambiguity and stale state; they never select the first match or bypass
+budgets. When a refusal includes `recovery`, `threadmoth suggest
+--from-refusal refusal.json` packages deterministic guarded next requests
+without choosing among candidate remedies.
 
 Building from source requires Rust 1.85 or newer:
 
@@ -325,7 +341,7 @@ Threadmoth currently supports:
 
 Providers propose candidates. **Core alone commits them.**
 
-`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.8.0 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
+`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.8.1 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
 
 ## Real-world dogfood: Lantern Keeper
 

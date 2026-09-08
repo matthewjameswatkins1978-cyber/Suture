@@ -10,10 +10,10 @@ use crate::protocol::{
     candidate_selection_id, Assertion, ByteEdit as PlanByteEdit, ByteRange, CandidateGuard,
     Certificate, CommitGuarantee, DesiredStateEvidence, DesiredStateOperation, EffectBudget,
     EffectUsage, FailureReason, MutationPlan, OperationPayload, Outcome, PlanApplyResult,
-    PreparedPlan, PreparedPlanOperation, PreservationFacts, RefusalReason, Request,
-    StructuralValidation, TransactionCertificate, TransactionRequest, MAX_ASSERTIONS,
-    MAX_ASSERTION_LITERAL_BYTES, MAX_FILE_BYTES, MAX_PLAN_BYTES, MAX_PLAN_OPERATIONS,
-    MAX_TRANSACTION_REQUESTS, SUPPORTED_PROTOCOL_VERSIONS,
+    PreparedPlan, PreparedPlanOperation, PreservationFacts, RecoveryInfo, RecoveryRemedy,
+    RefusalReason, Request, StructuralValidation, TransactionCertificate, TransactionRequest,
+    MAX_ASSERTIONS, MAX_ASSERTION_LITERAL_BYTES, MAX_FILE_BYTES, MAX_PLAN_BYTES,
+    MAX_PLAN_OPERATIONS, MAX_TRANSACTION_REQUESTS, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use crate::provider::code::{self, CodeError, CodeOperation};
 use crate::provider::dotenv::{self, DotenvError};
@@ -89,6 +89,14 @@ pub fn execute_request(workspace: &Workspace, request: &Request, dry_run: bool) 
             String::new(),
         );
     }
+    let _mutation_lock = if dry_run {
+        None
+    } else {
+        match workspace.acquire_mutation_lock() {
+            Ok(lock) => Some(lock),
+            Err(error) => return workspace_error(request, &file_path, provider, error),
+        }
+    };
     if let OperationPayload::File(operation) = &request.operation {
         return execute_file_operation(workspace, request, &file_path, operation, dry_run);
     }
@@ -736,6 +744,8 @@ pub fn prepare_transaction_plan(
                     refusal_reason: certificate.refusal_reason.clone(),
                     failure_reason: certificate.failure_reason.clone(),
                     reason_code: certificate.reason_code.clone(),
+                    recovery: certificate.recovery.clone(),
+                    schema_diagnostic: None,
                 })
             }
         };
@@ -876,6 +886,10 @@ pub fn apply_prepared_plan(workspace: &Workspace, plan: &PreparedPlan) -> PlanAp
             },
         );
     }
+    let _mutation_lock = match workspace.acquire_mutation_lock() {
+        Ok(lock) => lock,
+        Err(error) => return plan_failure_result(workspace, plan, workspace_reason(error)),
+    };
     let mut prepared = Vec::with_capacity(plan.operations.len());
     let mut overrides = std::collections::HashMap::new();
     let mut aggregate = zero_effect();
@@ -1038,6 +1052,8 @@ pub fn apply_prepared_plan(workspace: &Workspace, plan: &PreparedPlan) -> PlanAp
                     refusal_reason: None,
                     failure_reason: None,
                     reason_code: None,
+                    recovery: None,
+                    schema_diagnostic: None,
                 })
             }
         }
@@ -1055,6 +1071,8 @@ pub fn apply_prepared_plan(workspace: &Workspace, plan: &PreparedPlan) -> PlanAp
                     refusal_reason: certificate.refusal_reason,
                     failure_reason: certificate.failure_reason,
                     reason_code: certificate.reason_code,
+                    recovery: certificate.recovery,
+                    schema_diagnostic: None,
                 })
             }
         }
@@ -1305,6 +1323,8 @@ fn plan_failure_result(
             refusal_reason: certificate.refusal_reason.clone(),
             failure_reason: certificate.failure_reason.clone(),
             reason_code: certificate.reason_code.clone(),
+            recovery: certificate.recovery.clone(),
+            schema_diagnostic: None,
         })
     }
 }
@@ -1331,6 +1351,8 @@ fn empty_plan_certificate(plan: &PreparedPlan, reason: RefusalReason) -> Certifi
         refusal_reason: Some(reason.clone()),
         failure_reason: None,
         reason_code: Some(reason.code().into()),
+        recovery: None,
+        schema_diagnostic: None,
         diagnostics: Vec::new(),
         budget: plan.budget.clone(),
         effect: zero_effect(),
@@ -1500,6 +1522,14 @@ pub fn execute_transaction(
             },
         );
     }
+    let _mutation_lock = if dry_run {
+        None
+    } else {
+        match workspace.acquire_mutation_lock() {
+            Ok(lock) => Some(lock),
+            Err(error) => return transaction_refusal(transaction, workspace_reason(error)),
+        }
+    };
     let mut unique_paths = std::collections::HashSet::new();
     let has_duplicate_path = transaction.requests.iter().any(|request| {
         !unique_paths.insert(PathNormalizer::normalize(
@@ -1550,6 +1580,8 @@ pub fn execute_transaction(
                     refusal_reason: certificate.refusal_reason.clone(),
                     failure_reason: certificate.failure_reason.clone(),
                     reason_code: certificate.reason_code.clone(),
+                    recovery: certificate.recovery.clone(),
+                    schema_diagnostic: None,
                 }
             }
         };
@@ -1590,6 +1622,8 @@ pub fn execute_transaction(
             refusal_reason: None,
             failure_reason: None,
             reason_code: None,
+            recovery: None,
+            schema_diagnostic: None,
         };
     }
     let journal = Journal {
@@ -1646,6 +1680,8 @@ pub fn execute_transaction(
                         message: error.to_string(),
                     }),
                     reason_code: Some("COMMIT_FAILED".into()),
+                    recovery: None,
+                    schema_diagnostic: None,
                 };
             }
         }
@@ -1684,6 +1720,8 @@ pub fn execute_transaction(
                         actual_hash: format!("read failed: {error}"),
                     }),
                     reason_code: Some("POST_COMMIT_VERIFICATION_FAILED".into()),
+                    recovery: None,
+                    schema_diagnostic: None,
                 };
             }
         };
@@ -1715,6 +1753,8 @@ pub fn execute_transaction(
                     actual_hash,
                 }),
                 reason_code: Some("POST_COMMIT_VERIFICATION_FAILED".into()),
+                recovery: None,
+                schema_diagnostic: None,
             };
         }
     }
@@ -1741,6 +1781,8 @@ pub fn execute_transaction(
             message: format!("recovery journal cleanup failed: {error}"),
         }),
         reason_code: None,
+        recovery: None,
+        schema_diagnostic: None,
     }
 }
 
@@ -1959,6 +2001,8 @@ fn execute_single_file_transaction(
             refusal_reason: None,
             failure_reason: None,
             reason_code: None,
+            recovery: None,
+            schema_diagnostic: None,
         };
     }
     if original == current {
@@ -1972,6 +2016,8 @@ fn execute_single_file_transaction(
             refusal_reason: None,
             failure_reason: None,
             reason_code: None,
+            recovery: None,
+            schema_diagnostic: None,
         };
     }
     let journal = Journal {
@@ -2013,6 +2059,8 @@ fn execute_single_file_transaction(
                             actual_hash: format!("read failed: {error}"),
                         }),
                         reason_code: Some("POST_COMMIT_VERIFICATION_FAILED".into()),
+                        recovery: None,
+                        schema_diagnostic: None,
                     };
                 }
             };
@@ -2031,6 +2079,8 @@ fn execute_single_file_transaction(
                         actual_hash,
                     }),
                     reason_code: Some("POST_COMMIT_VERIFICATION_FAILED".into()),
+                    recovery: None,
+                    schema_diagnostic: None,
                 };
             }
             let cleanup = recovery::remove_journal(workspace, &transaction.transaction_id);
@@ -2052,6 +2102,8 @@ fn execute_single_file_transaction(
                     message: format!("recovery journal cleanup failed: {error}"),
                 }),
                 reason_code: None,
+                recovery: None,
+                schema_diagnostic: None,
             }
         }
         Err(error) => TransactionCertificate {
@@ -2066,6 +2118,8 @@ fn execute_single_file_transaction(
                 message: error.to_string(),
             }),
             reason_code: Some("COMMIT_FAILED".into()),
+            recovery: None,
+            schema_diagnostic: None,
         },
     }
 }
@@ -2075,6 +2129,10 @@ fn transaction_refusal(
     reason: RefusalReason,
 ) -> TransactionCertificate {
     let reason_code = reason.code().into();
+    let recovery = transaction
+        .requests
+        .first()
+        .and_then(|request| recovery_for(request, &reason, ""));
     TransactionCertificate {
         protocol_version: transaction.version.clone(),
         transaction_id: transaction.transaction_id.clone(),
@@ -2085,6 +2143,8 @@ fn transaction_refusal(
         refusal_reason: Some(reason),
         failure_reason: None,
         reason_code: Some(reason_code),
+        recovery,
+        schema_diagnostic: None,
     }
 }
 fn transaction_failure(
@@ -2102,6 +2162,8 @@ fn transaction_failure(
         refusal_reason: None,
         failure_reason: Some(reason),
         reason_code: Some(reason_code),
+        recovery: None,
+        schema_diagnostic: None,
     }
 }
 
@@ -3071,11 +3133,11 @@ fn refusal(
     reason: RefusalReason,
     pre: String,
 ) -> Certificate {
-    completed(
+    let mut certificate = completed(
         r,
         path,
         provider,
-        pre,
+        pre.clone(),
         None,
         Outcome::Refused,
         Vec::new(),
@@ -3085,8 +3147,11 @@ fn refusal(
         format!("{reason:?}"),
         false,
         zero_effect(),
-    )
-    .with_reason(reason)
+    );
+    certificate.refusal_reason = Some(reason.clone());
+    certificate.reason_code = Some(reason.code().into());
+    certificate.recovery = recovery_for(r, &reason, &pre);
+    certificate
 }
 
 fn refusal_with_effect(
@@ -3101,7 +3166,7 @@ fn refusal_with_effect(
         r,
         path,
         provider,
-        pre,
+        pre.clone(),
         None,
         Outcome::Refused,
         Vec::new(),
@@ -3112,12 +3177,121 @@ fn refusal_with_effect(
         false,
         effect,
     );
-    certificate.refusal_reason = Some(reason);
+    certificate.refusal_reason = Some(reason.clone());
     certificate.reason_code = certificate
         .refusal_reason
         .as_ref()
         .map(|value| value.code().into());
+    certificate.recovery = recovery_for(r, &reason, &pre);
     certificate
+}
+
+fn recovery_for(request: &Request, reason: &RefusalReason, pre_hash: &str) -> Option<RecoveryInfo> {
+    let mut remedies = Vec::new();
+    let request_patch = |mut patched: Request| {
+        serde_json::to_value({
+            patched.version = request.version.clone();
+            patched
+        })
+        .ok()
+    };
+    match reason {
+        RefusalReason::DuplicateTarget { candidates, .. } => {
+            let mut candidates = candidates.clone();
+            candidates.sort_by(|left, right| {
+                (left.offset, left.end, &left.selection_id).cmp(&(
+                    right.offset,
+                    right.end,
+                    &right.selection_id,
+                ))
+            });
+            for candidate in candidates {
+                let mut patched = request.clone();
+                patched.expected_pre_hash = (!pre_hash.is_empty()).then(|| pre_hash.to_owned());
+                patched.candidate_guard = Some(CandidateGuard {
+                    offset: candidate.offset,
+                    selection_id: candidate.selection_id.clone(),
+                });
+                remedies.push(RecoveryRemedy {
+                    kind: "candidate_selection".into(),
+                    description: format!("candidate at line {}", candidate.line),
+                    request_patch: request_patch(patched),
+                });
+            }
+            Some(RecoveryInfo {
+                requires_choice: true,
+                remedies,
+            })
+        }
+        RefusalReason::StaleIdentity { actual_hash, .. } => {
+            let mut patched = request.clone();
+            patched.expected_pre_hash = Some(actual_hash.clone());
+            remedies.push(RecoveryRemedy {
+                kind: "refresh_pre_hash".into(),
+                description: "refresh the observed file hash, then preview again".into(),
+                request_patch: request_patch(patched),
+            });
+            Some(RecoveryInfo {
+                requires_choice: false,
+                remedies,
+            })
+        }
+        RefusalReason::EffectBudgetExceeded {
+            dimension, actual, ..
+        } => {
+            let mut patched = request.clone();
+            match dimension.as_str() {
+                "max_files" => patched.budget.max_files = Some(*actual),
+                "max_matches" => patched.budget.max_matches = Some(*actual),
+                "max_changed_regions" => patched.budget.max_changed_regions = Some(*actual),
+                "max_changed_lines" => patched.budget.max_changed_lines = Some(*actual),
+                "max_changed_bytes" => patched.budget.max_changed_bytes = Some(*actual),
+                _ => return None,
+            }
+            remedies.push(RecoveryRemedy {
+                kind: "increase_exact_budget".into(),
+                description: format!("raise {dimension} to the observed bounded effect"),
+                request_patch: request_patch(patched),
+            });
+            Some(RecoveryInfo {
+                requires_choice: true,
+                remedies,
+            })
+        }
+        RefusalReason::MissingTarget { .. } => Some(RecoveryInfo {
+            requires_choice: true,
+            remedies: vec![RecoveryRemedy {
+                kind: "narrow_target".into(),
+                description: "inspect the current file and provide a supported exact target".into(),
+                request_patch: None,
+            }],
+        }),
+        RefusalReason::LossyOperationRequiresOptIn { operation } => Some(RecoveryInfo {
+            requires_choice: true,
+            remedies: vec![RecoveryRemedy {
+                kind: "explicit_lossy_opt_in".into(),
+                description: format!("explicitly authorize the lossy operation {operation}"),
+                request_patch: None,
+            }],
+        }),
+        RefusalReason::WorkspaceBusy { .. } => Some(RecoveryInfo {
+            requires_choice: false,
+            remedies: vec![RecoveryRemedy {
+                kind: "retry_after_lock_release".into(),
+                description: "retry after the cooperating Threadmoth writer exits".into(),
+                request_patch: None,
+            }],
+        }),
+        RefusalReason::PlanStale { .. } | RefusalReason::PlanInvalid { .. } => Some(RecoveryInfo {
+            requires_choice: false,
+            remedies: vec![RecoveryRemedy {
+                kind: "rebuild_plan".into(),
+                description: "re-prepare the plan from the current workspace state".into(),
+                request_patch: None,
+            }],
+        }),
+        _ => None,
+    }
 }
 fn failure(
     r: &Request,
@@ -3216,6 +3390,13 @@ fn workspace_error(r: &Request, path: &str, provider: &str, e: WorkspaceError) -
             },
             String::new(),
         ),
+        WorkspaceError::Busy { lock_path } => refusal(
+            r,
+            path,
+            provider,
+            RefusalReason::WorkspaceBusy { lock_path },
+            String::new(),
+        ),
     }
 }
 
@@ -3239,6 +3420,7 @@ fn workspace_reason(error: WorkspaceError) -> RefusalReason {
             limit,
             actual,
         },
+        WorkspaceError::Busy { lock_path } => RefusalReason::WorkspaceBusy { lock_path },
         WorkspaceError::Io(error) => RefusalReason::Custom {
             message: format!("workspace I/O error: {error}"),
         },
@@ -3282,7 +3464,9 @@ fn completed(
         refusal_reason: None,
         failure_reason: None,
         reason_code: None,
+        recovery: None,
         diagnostics: Vec::new(),
+        schema_diagnostic: None,
         budget: r.budget.clone(),
         effect,
         transaction_guarantee,
@@ -3427,16 +3611,6 @@ fn changed_line_count(original: &[u8], candidate: &[u8]) -> usize {
             similar::DiffOp::Equal { .. } => 0,
         })
         .sum()
-}
-trait WithReason {
-    fn with_reason(self, r: RefusalReason) -> Self;
-}
-impl WithReason for Certificate {
-    fn with_reason(mut self, r: RefusalReason) -> Self {
-        self.reason_code = Some(r.code().into());
-        self.refusal_reason = Some(r);
-        self
-    }
 }
 impl PreservationFacts {
     fn from_bytes(a: &[u8], b: &[u8]) -> Self {

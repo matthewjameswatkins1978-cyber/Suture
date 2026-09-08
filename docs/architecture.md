@@ -2,6 +2,14 @@
 
 Threadmoth runs `OBSERVE -> IDENTIFY -> GUARD -> MUTATE -> VERIFY -> CERTIFY`.
 
+Threadmoth 1.8.1 keeps the mutation boundary deliberately small. All CLI,
+MCP, shorthand, plan, and transaction paths converge on Core preparation,
+guarding, verification, and certification. Cooperating writers take the
+workspace mutation lock for the full read/prepare/commit/verify boundary;
+read-only discovery remains unlocked. The lock protects against another
+Threadmoth process, not an unrelated editor, so stale hashes and post-commit
+readback remain part of the guarantee.
+
 For the prepared-plan workflow the same core becomes `OBSERVE -> IDENTIFY -> GUARD -> PLAN -> VERIFY PROSPECTIVE -> MUTATE -> VERIFY COMMITTED -> CERTIFY`.
 
 > The parser gets to point at the cloth. It doesn’t get to re-weave it.

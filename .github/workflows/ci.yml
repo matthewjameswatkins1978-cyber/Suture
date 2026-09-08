@@ -24,6 +24,7 @@ jobs:
       - run: cargo run --release -- benchmark --torture --json
       - run: cargo run --release -- --version
       - run: cargo run --release -- doctor
+      - run: cargo run --release -- doctor --json
       - run: cargo run --release -- capabilities
       - run: cargo run --release -- capabilities --json --all
       - run: cargo run --release -- examples exact-text-replacement

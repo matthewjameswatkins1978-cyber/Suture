@@ -689,6 +689,30 @@ pub fn reason_metadata() -> Vec<ReasonMetadata> {
         ["inspect", "preview"]
     );
     reason!(
+        "PLAN_STALE",
+        "A prepared plan no longer matches one or more files.",
+        "Applying any part of a stale plan could mutate the wrong state.",
+        "rebuild_plan",
+        false,
+        ["plan", "explain", "suggest"]
+    );
+    reason!(
+        "WORKSPACE_BUSY",
+        "Another cooperating Threadmoth process owns the mutation boundary.",
+        "Concurrent Threadmoth writers must not commit conflicting observations.",
+        "retry_after_lock_release",
+        false,
+        ["doctor", "suggest"]
+    );
+    reason!(
+        "SCHEMA_INVALID",
+        "The request used a strict schema incorrectly.",
+        "Threadmoth will not reinterpret an unknown or misspelled field.",
+        "correct_request_schema",
+        false,
+        ["schema", "examples"]
+    );
+    reason!(
         "EFFECT_BUDGET_EXCEEDED",
         "The prepared effect exceeds a caller limit.",
         "No bytes are written when a declared budget fails.",
@@ -1862,7 +1886,15 @@ pub fn refusal_recovery(certificate: &crate::protocol::Certificate) -> Value {
     if let Some(crate::protocol::RefusalReason::DuplicateTarget { candidates, .. }) =
         certificate.refusal_reason.as_ref()
     {
-        for candidate in candidates {
+        let mut candidates = candidates.clone();
+        candidates.sort_by(|left, right| {
+            (left.offset, left.end, &left.selection_id).cmp(&(
+                right.offset,
+                right.end,
+                &right.selection_id,
+            ))
+        });
+        for candidate in &candidates {
             let target = if candidate.target.is_empty() {
                 candidate.context.clone()
             } else {
@@ -1892,7 +1924,7 @@ pub fn refusal_recovery(certificate: &crate::protocol::Certificate) -> Value {
             "no_safe_automatic_retry_template": !matches!(certificate.provider.as_str(), "text" | "pattern" | "markdown" | "code" | "web")
         }));
     }
-    json!({"reason_code": reason, "capability_set_id": capabilities().capability_set_id, "source_certificate": certificate.request_id, "suggestions": suggestions, "blocked_reasons": [format!("{reason} must be corrected before retry")], "safe_retry": false})
+    json!({"reason_code": reason, "capability_set_id": capabilities().capability_set_id, "source_certificate": certificate.request_id, "recovery": certificate.recovery, "suggestions": suggestions, "blocked_reasons": [format!("{reason} must be corrected before retry")], "safe_retry": false})
 }
 
 fn recovery_request(

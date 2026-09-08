@@ -5,11 +5,11 @@ This is the durable record for Threadmoth discovery work. It records what was ac
 ## Snapshot
 
 Date: 2026-09-08  
-Stable published release: [Threadmoth 1.7.1](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.7.1)
+Stable published release: [Threadmoth 1.8.1](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.8.1)
 Repository: [matthewjameswatkins1978-cyber/Threadmoth](https://github.com/matthewjameswatkins1978-cyber/Threadmoth)
 Repository slug: `/Threadmoth`; the old `/Suture` URL redirects to the new canonical repository.
 
-Threadmoth 1.7.1 is published with release artifacts for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. `main` now contains the 1.7.1 release line and is the release branch of record.
+Threadmoth 1.8.1 is published with release artifacts for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. `main` now contains the 1.8.1 release line and is the release branch of record.
 
 The earlier adoption snapshot reported 0 stars, 0 forks, and 0 watchers, with release asset download counters mostly in the 1–2 range. Those figures are historical observations rather than live installation counts and should not be treated as current metrics without a fresh GitHub check.
 

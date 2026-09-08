@@ -20,6 +20,15 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Replace exactly one literal occurrence using the canonical text pipeline.
+    ReplaceExact(ReplaceExactArgs),
+
+    /// Set one structured value using the canonical provider pipeline.
+    SetValue(SetValueArgs),
+
+    /// Create one missing file without overwriting an existing destination.
+    CreateFile(CreateFileArgs),
+
     /// Apply one verified mutation.
     #[command(
         alias = "apply",
@@ -95,6 +104,9 @@ pub enum Command {
         /// Emit machine-readable JSON.
         #[arg(short = 'j', long)]
         json: bool,
+        /// Render a prepared plan as a bounded diff or Markdown review.
+        #[arg(long, value_enum)]
+        format: Option<ExplainFormat>,
     },
 
     /// Suggest a safe request shape for a workspace file or refusal.
@@ -114,7 +126,7 @@ pub enum Command {
     Schema(SchemaArgs),
 
     /// Check runtime and CLI installation health.
-    Doctor,
+    Doctor(DoctorArgs),
 
     /// Check for and explicitly install a stable official Threadmoth release.
     #[command(
@@ -142,6 +154,34 @@ pub enum Command {
 
     /// Run the MCP stdio server.
     Mcp,
+}
+
+#[derive(Args, Debug)]
+pub struct DoctorArgs {
+    /// Emit stable machine-readable health data without network access.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ReplaceExactArgs {
+    pub file: std::path::PathBuf,
+    pub old: String,
+    pub new: String,
+}
+
+#[derive(Args, Debug)]
+pub struct SetValueArgs {
+    pub file: std::path::PathBuf,
+    pub path: String,
+    /// JSON spelling of the value, for example 8080, true, or "enabled".
+    pub value: String,
+}
+
+#[derive(Args, Debug)]
+pub struct CreateFileArgs {
+    pub file: std::path::PathBuf,
+    pub content: String,
 }
 
 #[derive(Args, Debug)]
@@ -335,6 +375,12 @@ pub enum CompletionShell {
     Zsh,
     Fish,
     Powershell,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ExplainFormat {
+    Diff,
+    Markdown,
 }
 
 impl From<CompletionShell> for clap_complete::Shell {

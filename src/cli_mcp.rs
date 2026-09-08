@@ -8,7 +8,8 @@ use std::{
 use threadmoth::{
     pipeline::execute_request,
     protocol::{
-        Assertion, PreparedPlan, Request, TransactionRequest, MAX_REQUEST_BYTES, PROTOCOL_VERSION,
+        Assertion, Cardinality, EffectBudget, OperationPayload, PreparedPlan, Request,
+        TransactionRequest, MAX_REQUEST_BYTES, PROTOCOL_VERSION,
     },
     workspace::Workspace,
 };
@@ -48,8 +49,91 @@ struct CapabilitiesToolArgs {
     for_path: Option<String>,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ExactReplaceToolArgs {
+    file: String,
+    old: String,
+    new: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SetValueToolArgs {
+    file: String,
+    path: String,
+    value: Value,
+}
+
 fn default_suggestion_mode() -> String {
     "safe".into()
+}
+
+fn shorthand_request(file: &str, operation: OperationPayload, bytes: usize) -> Request {
+    Request {
+        version: PROTOCOL_VERSION.into(),
+        request_id: format!("mcp-shorthand-{file}"),
+        allow_generated: false,
+        file_path: file.replace('\\', "/"),
+        namespace: Default::default(),
+        expected_pre_hash: None,
+        region_guard: None,
+        candidate_guard: None,
+        cardinality: Cardinality::ExactlyOne,
+        budget: EffectBudget {
+            max_files: Some(1),
+            max_matches: Some(1),
+            max_changed_regions: Some(1),
+            max_changed_lines: None,
+            max_changed_bytes: Some(bytes.max(1)),
+            allowed_path_prefixes: Vec::new(),
+        },
+        operation,
+    }
+}
+
+fn set_value_operation(file: &str, path: &str, value: Value) -> Result<OperationPayload, String> {
+    let extension = std::path::Path::new(file)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "json" => Ok(OperationPayload::Json(
+            threadmoth::provider::json::JsonOperation::Set {
+                path: path.into(),
+                value,
+            },
+        )),
+        "jsonc" => Ok(OperationPayload::Jsonc(
+            threadmoth::provider::json::JsonOperation::Set {
+                path: path.into(),
+                value,
+            },
+        )),
+        "yaml" | "yml" => Ok(OperationPayload::Yaml(
+            threadmoth::provider::yaml::YamlOperation::Set {
+                path: path.into(),
+                value,
+            },
+        )),
+        "toml" => {
+            let value = serde_json::from_value(value)
+                .map_err(|error| format!("TOML value is not representable: {error}"))?;
+            Ok(OperationPayload::Toml(
+                threadmoth::provider::toml::TomlOperation::Set {
+                    path: path.into(),
+                    value,
+                },
+            ))
+        }
+        _ => Err("set-value supports .json, .jsonc, .toml, .yaml, and .yml files".into()),
+    }
+}
+
+fn schema_error(error: serde_json::Error) -> String {
+    serde_json::to_string(&threadmoth::protocol::schema_diagnostic(&error.to_string()))
+        .unwrap_or_else(|_| error.to_string())
 }
 
 pub fn run_mcp() {
@@ -135,7 +219,9 @@ fn handle_mcp_message(workspace: &Workspace, request: Value) -> Option<Value> {
                     {"name": "threadmoth_explain", "description": "Return stable metadata for a refusal or failure reason", "inputSchema": schema_for!(ExplainToolArgs)},
                     {"name": "threadmoth_capabilities", "description": "Return Threadmoth capabilities, optionally scoped to a provider or path", "inputSchema": schema_for!(CapabilitiesToolArgs)},
                     {"name": "threadmoth_transact_preview", "description": "Preview a guarded transaction without writing", "inputSchema": schema_for!(TransactionRequest)},
-                    {"name": "threadmoth_transact", "description": "Prepare and commit a guarded transaction", "inputSchema": schema_for!(TransactionRequest)}
+                    {"name": "threadmoth_transact", "description": "Prepare and commit a guarded transaction", "inputSchema": schema_for!(TransactionRequest)},
+                    {"name": "threadmoth_exact_replace", "description": "Safely replace one exact text occurrence through the canonical pipeline", "inputSchema": schema_for!(ExactReplaceToolArgs)},
+                    {"name": "threadmoth_set_value", "description": "Safely set one JSON, JSONC, TOML, or YAML value through the canonical pipeline", "inputSchema": schema_for!(SetValueToolArgs)}
                 ]}
             }),
             Some("tools/call") => {
@@ -189,9 +275,34 @@ fn handle_mcp_message(workspace: &Workspace, request: Value) -> Option<Value> {
 
 fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Value, String> {
     match name {
+        "threadmoth_exact_replace" => {
+            let args =
+                serde_json::from_value::<ExactReplaceToolArgs>(arguments).map_err(schema_error)?;
+            let request = shorthand_request(
+                &args.file,
+                OperationPayload::Text(threadmoth::provider::text::TextOperation::Replace {
+                    target: args.old.clone(),
+                    replacement: args.new.clone(),
+                }),
+                args.old.len().max(args.new.len()),
+            );
+            serde_json::to_value(execute_request(workspace, &request, false))
+                .map_err(|error| error.to_string())
+        }
+        "threadmoth_set_value" => {
+            let args =
+                serde_json::from_value::<SetValueToolArgs>(arguments).map_err(schema_error)?;
+            let bytes = serde_json::to_vec(&args.value)
+                .map_err(|error| error.to_string())?
+                .len();
+            let operation = set_value_operation(&args.file, &args.path, args.value)?;
+            let request = shorthand_request(&args.file, operation, bytes);
+            serde_json::to_value(execute_request(workspace, &request, false))
+                .map_err(|error| error.to_string())
+        }
         "threadmoth_capabilities" | "suture_capabilities" => {
-            let args = serde_json::from_value::<CapabilitiesToolArgs>(arguments)
-                .map_err(|e| e.to_string())?;
+            let args =
+                serde_json::from_value::<CapabilitiesToolArgs>(arguments).map_err(schema_error)?;
             let output = if let Some(path) = args.for_path {
                 let bytes = workspace.read_file(&path).ok();
                 threadmoth::metadata::capabilities_for(&path, bytes.as_deref())
@@ -202,12 +313,12 @@ fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Valu
         }
         "threadmoth_inspect" => {
             let args =
-                serde_json::from_value::<InspectToolArgs>(arguments).map_err(|e| e.to_string())?;
+                serde_json::from_value::<InspectToolArgs>(arguments).map_err(schema_error)?;
             threadmoth::metadata::inspect(workspace, &args.path)
         }
         "threadmoth_suggest" => {
             let args =
-                serde_json::from_value::<SuggestToolArgs>(arguments).map_err(|e| e.to_string())?;
+                serde_json::from_value::<SuggestToolArgs>(arguments).map_err(schema_error)?;
             let bytes = workspace.read_file(&args.path).ok();
             serde_json::to_value(threadmoth::metadata::suggest(
                 &args.path,
@@ -220,22 +331,20 @@ fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Valu
         }
         "threadmoth_explain" => {
             let args =
-                serde_json::from_value::<ExplainToolArgs>(arguments).map_err(|e| e.to_string())?;
+                serde_json::from_value::<ExplainToolArgs>(arguments).map_err(schema_error)?;
             let reason = threadmoth::metadata::reason(&args.code)
                 .ok_or_else(|| format!("unknown reason code: {}", args.code))?;
             serde_json::to_value(reason).map_err(|e| e.to_string())
         }
         "threadmoth_mutate" | "suture_mutate" => {
-            let request =
-                serde_json::from_value::<Request>(arguments).map_err(|e| e.to_string())?;
+            let request = serde_json::from_value::<Request>(arguments).map_err(schema_error)?;
             Ok(
                 serde_json::to_value(execute_request(workspace, &request, false))
                     .map_err(|e| e.to_string())?,
             )
         }
         "threadmoth_preview" | "suture_preview" => {
-            let request =
-                serde_json::from_value::<Request>(arguments).map_err(|e| e.to_string())?;
+            let request = serde_json::from_value::<Request>(arguments).map_err(schema_error)?;
             Ok(
                 serde_json::to_value(execute_request(workspace, &request, true))
                     .map_err(|e| e.to_string())?,
@@ -246,14 +355,12 @@ fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Valu
             let assertions = value
                 .as_object_mut()
                 .and_then(|object| object.remove("assertions"))
-                .map(|value| {
-                    serde_json::from_value::<Vec<Assertion>>(value).map_err(|e| e.to_string())
-                })
+                .map(|value| serde_json::from_value::<Vec<Assertion>>(value).map_err(schema_error))
                 .transpose()?
                 .unwrap_or_default();
             if value.get("transaction_id").is_some() {
-                let transaction = serde_json::from_value::<TransactionRequest>(value)
-                    .map_err(|e| e.to_string())?;
+                let transaction =
+                    serde_json::from_value::<TransactionRequest>(value).map_err(schema_error)?;
                 let plan = threadmoth::pipeline::prepare_transaction_plan(
                     workspace,
                     &transaction,
@@ -262,8 +369,7 @@ fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Valu
                 .map_err(|certificate| serde_json::to_string(&certificate).unwrap())?;
                 serde_json::to_value(plan).map_err(|e| e.to_string())
             } else {
-                let request =
-                    serde_json::from_value::<Request>(value).map_err(|e| e.to_string())?;
+                let request = serde_json::from_value::<Request>(value).map_err(schema_error)?;
                 let plan =
                     threadmoth::pipeline::prepare_request_plan(workspace, &request, assertions)
                         .map_err(|certificate| serde_json::to_string(&certificate).unwrap())?;
@@ -271,14 +377,13 @@ fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Valu
             }
         }
         "threadmoth_apply_plan" => {
-            let plan =
-                serde_json::from_value::<PreparedPlan>(arguments).map_err(|e| e.to_string())?;
+            let plan = serde_json::from_value::<PreparedPlan>(arguments).map_err(schema_error)?;
             serde_json::to_value(threadmoth::pipeline::apply_prepared_plan(workspace, &plan))
                 .map_err(|e| e.to_string())
         }
         "threadmoth_transact" | "suture_transact" => {
-            let transaction = serde_json::from_value::<TransactionRequest>(arguments)
-                .map_err(|e| e.to_string())?;
+            let transaction =
+                serde_json::from_value::<TransactionRequest>(arguments).map_err(schema_error)?;
             Ok(
                 serde_json::to_value(threadmoth::pipeline::execute_transaction(
                     workspace,
@@ -289,8 +394,8 @@ fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Valu
             )
         }
         "threadmoth_transact_preview" => {
-            let transaction = serde_json::from_value::<TransactionRequest>(arguments)
-                .map_err(|e| e.to_string())?;
+            let transaction =
+                serde_json::from_value::<TransactionRequest>(arguments).map_err(schema_error)?;
             Ok(
                 serde_json::to_value(threadmoth::pipeline::execute_transaction(
                     workspace,

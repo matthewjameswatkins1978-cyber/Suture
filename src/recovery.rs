@@ -110,6 +110,13 @@ pub fn recover_all(workspace: &Workspace) -> RecoveryReport {
         cleaned: 0,
         manual: Vec::new(),
     };
+    let _lock = match workspace.acquire_mutation_lock() {
+        Ok(lock) => lock,
+        Err(error) => {
+            report.manual.push(format!("WORKSPACE_BUSY: {error}"));
+            return report;
+        }
+    };
     for dir in recovery_dirs(workspace) {
         recover_dir(workspace, &dir, &mut report);
     }
@@ -237,6 +244,13 @@ pub fn recover_transaction(workspace: &Workspace, transaction_id: &str) -> Recov
         restored: 0,
         cleaned: 0,
         manual: Vec::new(),
+    };
+    let _lock = match workspace.acquire_mutation_lock() {
+        Ok(lock) => lock,
+        Err(error) => {
+            report.manual.push(format!("WORKSPACE_BUSY: {error}"));
+            return report;
+        }
     };
     if let Some(path) = find_journal(workspace, transaction_id) {
         report.inspected = 1;
