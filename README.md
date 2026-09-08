@@ -101,7 +101,7 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Threadmoth 1.7.1 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
+Threadmoth 1.8.0 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
 
 ```text
 PASS  8/8 cases · 0 wrong mutations · correctness checked
@@ -109,11 +109,21 @@ PASS  8/8 cases · 0 wrong mutations · correctness checked
 
 Torture uses the same presentation rather than a separate wall of state messages.
 
-## Install
+## Install and update
 
 Download the platform binary from a GitHub release and put `threadmoth` (or `Threadmoth.exe`) on `PATH`.
 
-The current release is [Threadmoth v1.7.1](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.7.1), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
+The current release is [Threadmoth v1.8.0](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.8.0), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
+
+Standalone installations can check and explicitly update from the official GitHub Releases repository:
+
+```text
+threadmoth update --check
+threadmoth update
+threadmoth update --yes --json
+```
+
+The updater accepts stable releases only, selects the exact platform archive, verifies the release manifest SHA-256 and GitHub asset digest when available, checks the extracted executable's version, and replaces the current binary only after those checks pass. Cargo, Homebrew, and WinGet-managed installations are reported rather than overwritten. Mutation commands never access the network; only this explicit maintenance command does.
 
 Building from source requires Rust 1.85 or newer:
 
@@ -142,6 +152,16 @@ threadmoth_mutate or threadmoth_transact
 ```
 
 The MCP discovery surface is `threadmoth_inspect`, `threadmoth_suggest`, `threadmoth_explain`, and `threadmoth_capabilities`; `threadmoth_preview` and `threadmoth_transact_preview` never write. Ambiguous text and code targets can be selected only with their exact observed file hash, byte offset, and deterministic `selection_id`.
+
+For a portable, inspectable prepare/commit handoff, use the plan loop:
+
+```text
+threadmoth plan --request request.json --output plan.json
+threadmoth explain --plan plan.json
+threadmoth apply-plan --plan plan.json
+```
+
+Plans contain exact pre-image hashes, guarded provider resolutions, byte edits, effect budgets, and deterministic plan IDs. Applying one re-reads reality, refuses stale or tampered plans, checks prospective assertions, commits through the existing recovery machinery, reads the bytes back, and checks the assertions again.
 
 Minimal MCP server configuration:
 
@@ -383,7 +403,7 @@ Antigravity also has a native [`plugin.json`](plugin.json) manifest and reuses t
 
 ## Safety model
 
-Threadmoth is intentionally narrow. It mutates files. It does **not** execute Git, builds, tests, formatters, arbitrary subprocesses, or network operations.
+Threadmoth is intentionally narrow. Mutation operations do not execute Git, builds, tests, formatters, arbitrary subprocesses, or network operations. The explicit `threadmoth update` maintenance command is the one documented exception and contacts only the official release repository.
 
 The workspace layer confines paths, rejects traversal and escaping symlinks, stages writes in the destination directory, flushes before replacement, rechecks the observed hash immediately before commit, and reads the committed bytes back before certification.
 

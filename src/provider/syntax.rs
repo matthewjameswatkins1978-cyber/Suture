@@ -311,6 +311,8 @@ pub fn plan(
                         node_kind: Some(kind.clone()),
                     })
                     .collect(),
+                candidates_returned: found.len().min(8),
+                truncated: found.len() > 8,
             }
         }));
     }

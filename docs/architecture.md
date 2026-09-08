@@ -2,6 +2,8 @@
 
 Threadmoth runs `OBSERVE -> IDENTIFY -> GUARD -> MUTATE -> VERIFY -> CERTIFY`.
 
+For the prepared-plan workflow the same core becomes `OBSERVE -> IDENTIFY -> GUARD -> PLAN -> VERIFY PROSPECTIVE -> MUTATE -> VERIFY COMMITTED -> CERTIFY`.
+
 > The parser gets to point at the cloth. It doesn’t get to re-weave it.
 
 Core observes bytes through `Workspace`, checks the request version and optional pre-hash, asks exactly one provider for a byte-edit plan, applies edits in memory, validates the candidate, and owns persistence. Providers understand formats and propose edits; only Core commits.
@@ -11,6 +13,12 @@ A plan is not trusted merely because it is syntactically valid. Core checks edit
 Providers return byte ranges against the observed source. Text edits are exact byte matches. JSON uses strict parsing plus a source-range tree for localized edits. TOML derives a candidate with `toml_edit`, then narrows it to the changed source span and refuses representation drift outside the v0.1 contract.
 
 The workspace rejects absolute paths, `..` escapes, and symlink paths resolving outside the declared root. Commit uses destination-directory staged atomic replacement and reports metadata limits explicitly.
+
+## Prepared plans and maintenance boundary
+
+`threadmoth plan` serialises the existing guarded preparation result without writing. `threadmoth apply-plan` treats that file as staleable and tamperable input: it checks the deterministic plan ID, workspace containment, stored pre-images, provider resolution, exact byte edits, effect budgets, and assertions before entering the existing journaled commit path. It then reads committed bytes back and evaluates assertions again. Preview and ordinary mutation continue to use their existing surfaces; plans are an additional prepare/commit handoff, not a second transaction engine.
+
+The updater is a separate CLI maintenance boundary. Mutation Core, providers, and MCP mutation tools have no updater call path and no network capability. Only an explicit `threadmoth update` invocation contacts the official release repository.
 
 ## One core, two plan constructors
 

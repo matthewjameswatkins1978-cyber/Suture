@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.0 - Plans and proof
+
+Threadmoth 1.8 makes guarded mutations portable and provable. It adds deterministic serialisable plans, exact stale-state rechecking, prospective and committed postcondition checks, and an explicit CLI-only updater for standalone installations.
+
+- Added `threadmoth plan`, `threadmoth apply-plan`, and `threadmoth explain --plan`.
+- Added bounded `file_exists`, `file_absent`, `sha256`, and `literal_count` assertions.
+- Added protocol 1.3 capability flags, plan limits, and MCP plan/apply-plan parity.
+- Added official GitHub-release self-update with archive SHA-256, GitHub digest, extracted-binary version, and safe replacement verification.
+- Preserved local-only mutation and existing preview, mutate, transaction, recovery, and candidate-guard flows.
+
 ## 1.7.1 - Repository and distribution hardening
 
 Threadmoth 1.7.1 keeps the 1.7 agent-usability runtime stable while making the public repository and release process consistent with the Threadmoth identity.

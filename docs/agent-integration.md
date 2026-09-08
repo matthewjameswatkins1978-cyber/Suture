@@ -73,7 +73,9 @@ MCP is an adapter over the same deterministic core. The CLI/JSON contract remain
 
 The MCP tools are `threadmoth_capabilities`, `threadmoth_inspect`,
 `threadmoth_suggest`, `threadmoth_explain`, `threadmoth_preview`,
-`threadmoth_transact_preview`, `threadmoth_mutate`, and `threadmoth_transact`.
+`threadmoth_plan`, `threadmoth_apply_plan`, `threadmoth_transact_preview`,
+`threadmoth_mutate`, and `threadmoth_transact`. There is deliberately no
+`threadmoth_update`; self-update is an explicit CLI-only maintenance command.
 
 ## The 30-second agent loop
 
@@ -105,3 +107,8 @@ Threadmoth: {"outcome":"APPLIED","commit":{"mode":"dry_run"},...}
 Agent: threadmoth_mutate(the_same_request)
 Threadmoth: {"outcome":"APPLIED","post_hash":"...",...}
 ```
+
+When work must cross an agent-step or human review boundary, use
+`threadmoth_plan`/`threadmoth_apply_plan` (or the equivalent CLI commands).
+The plan is portable but not trusted: apply refuses stale pre-images and
+rechecks all guards, budgets, exact edits, and postconditions.

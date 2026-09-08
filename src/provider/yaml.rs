@@ -92,6 +92,8 @@ pub fn plan(
             target: path.into(),
             count: found.len(),
             candidates: Vec::new(),
+            candidates_returned: 0,
+            truncated: false,
         }));
     }
     if found.is_empty() {

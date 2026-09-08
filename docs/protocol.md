@@ -1,6 +1,8 @@
 # Protocol v1.2
 
-A request is JSON with `version: "1.2.0"`, a stable `request_id`, a workspace-relative `file_path`, optional `namespace`, optional `expected_pre_hash`, optional `candidate_guard`, a `cardinality`, an optional hard effect `budget`, and an operation. Requests using protocol `1.1.0` remain accepted with their original semantics. Package version 1.7.1 does not imply that every request must upgrade immediately. Run `threadmoth help`, `threadmoth examples`, `threadmoth schema`, `threadmoth explain`, `threadmoth suggest`, or `threadmoth capabilities` for local discovery. Unknown fields are rejected.
+A request is JSON with `version: "1.3.0"`, a stable `request_id`, a workspace-relative `file_path`, optional `namespace`, optional `expected_pre_hash`, optional `candidate_guard`, a `cardinality`, an optional hard effect `budget`, and an operation. Requests using protocol `1.1.0` and `1.2.0` remain accepted with their promised semantics. Package version 1.8.0 does not imply that every request must upgrade immediately. Run `threadmoth help`, `threadmoth examples`, `threadmoth schema`, `threadmoth explain`, `threadmoth suggest`, or `threadmoth capabilities` for local discovery. Unknown fields are rejected.
+
+Prepared plans use schema `1.0` and protocol `1.3.0`. They contain exact pre-image hashes, deterministic plan identity, provider-resolved byte edits, budgets, and optional bounded assertions. A plan is untrusted input: apply rechecks containment, schema, plan identity, provider guard compatibility, hashes, edits, budgets, and postconditions.
 
 The operation is encoded as an outer provider and nested tagged operation:
 

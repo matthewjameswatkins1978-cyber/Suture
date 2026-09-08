@@ -7,15 +7,17 @@ compatibility: >-
   Works with any agent that can read files and run local commands.
 metadata:
   author: matthewjameswatkins1978-cyber
-  version: "1.7.1"
+  version: "1.8.0"
 ---
 
 # Threadmoth
 
 Threadmoth is a narrow mutation boundary for existing files. It observes the
-file, identifies the intended target, guards the request, stages the candidate,
-verifies the committed bytes, and returns a certificate. It is not a general
-shell, formatter, compiler, test runner, Git client, or network tool.
+file, identifies the intended target, guards the request, prepares an exact
+candidate, verifies prospective and committed bytes, and returns a
+certificate. It is not a general shell, formatter, compiler, test runner, Git
+client, or network tool. The explicit `threadmoth update` maintenance command
+is a separate CLI-only exception.
 
 ## Decide whether to use it
 
@@ -87,6 +89,18 @@ obvious, preview first:
 threadmoth preview --request request.json
 threadmoth mutate --request request.json
 ```
+
+For a reviewable prepare/commit handoff:
+
+```text
+threadmoth plan --request request.json --output plan.json
+threadmoth explain --plan plan.json
+threadmoth apply-plan --plan plan.json
+```
+
+Plans are untrusted and staleable. Applying one rechecks hashes, containment,
+exact edits, budgets, candidate guards, and bounded assertions. Never try to
+repair a stale plan by fuzzy relocation; prepare a new plan.
 
 The default output is JSON. `--summary` is for a compact human view; keep the
 full JSON certificate for agent state, audit, and follow-up decisions. A

@@ -64,6 +64,8 @@ pub fn plan(
             target: key.clone(),
             count: matches.len(),
             candidates: Vec::new(),
+            candidates_returned: 0,
+            truncated: false,
         }));
     }
     if matches.is_empty() {

@@ -40,6 +40,14 @@ pub enum Command {
     )]
     Transact(TransactionArgs),
 
+    /// Prepare a deterministic mutation plan without writing.
+    #[command(after_help = "Example: threadmoth plan --request request.json --output plan.json")]
+    Plan(PlanArgs),
+
+    /// Apply a previously prepared exact plan.
+    #[command(after_help = "Example: threadmoth apply-plan --plan plan.json --summary")]
+    ApplyPlan(ApplyPlanArgs),
+
     /// Legacy alias for `transact --preview`.
     #[command(hide = true)]
     TransactionPreview(RequestArgs),
@@ -79,7 +87,11 @@ pub enum Command {
     /// Explain a refusal or failure reason code.
     Explain {
         /// Reason code such as TARGET_AMBIGUOUS.
-        code: String,
+        #[arg(value_name = "CODE", required_unless_present = "plan")]
+        code: Option<String>,
+        /// Explain a prepared plan without applying it.
+        #[arg(long, value_hint = ValueHint::FilePath, conflicts_with = "code")]
+        plan: Option<std::path::PathBuf>,
         /// Emit machine-readable JSON.
         #[arg(short = 'j', long)]
         json: bool,
@@ -103,6 +115,13 @@ pub enum Command {
 
     /// Check runtime and CLI installation health.
     Doctor,
+
+    /// Check for and explicitly install a stable official Threadmoth release.
+    #[command(
+        disable_version_flag = true,
+        after_help = "Examples:\n  threadmoth update --check\n  threadmoth update\n  threadmoth update --yes --json"
+    )]
+    Update(UpdateArgs),
 
     /// Generate shell completion for Threadmoth.
     #[command(
@@ -164,6 +183,51 @@ pub struct TransactionArgs {
     /// Print a compact human summary instead of the full JSON certificate.
     #[arg(long)]
     pub summary: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct PlanArgs {
+    /// Read a request or transaction JSON file instead of stdin.
+    #[arg(short = 'r', long, value_hint = ValueHint::FilePath)]
+    pub request: Option<std::path::PathBuf>,
+
+    /// Write the prepared plan to this file as well as stdout.
+    #[arg(short, long, value_hint = ValueHint::FilePath)]
+    pub output: Option<std::path::PathBuf>,
+
+    /// Print a compact human summary instead of the full plan.
+    #[arg(long)]
+    pub summary: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ApplyPlanArgs {
+    /// Read the prepared plan from this file instead of stdin.
+    #[arg(short, long, value_hint = ValueHint::FilePath)]
+    pub plan: std::path::PathBuf,
+
+    /// Print a compact human summary instead of the full certificate.
+    #[arg(long)]
+    pub summary: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct UpdateArgs {
+    /// Check for an update without replacing the current executable.
+    #[arg(long)]
+    pub check: bool,
+
+    /// Do not ask for confirmation before replacing the current executable.
+    #[arg(long)]
+    pub yes: bool,
+
+    /// Emit one machine-readable status object.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Check for this stable release, refusing downgrades.
+    #[arg(long, value_name = "VERSION")]
+    pub version: Option<String>,
 }
 
 #[derive(Args, Debug)]

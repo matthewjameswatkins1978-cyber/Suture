@@ -14,6 +14,7 @@ pub mod protocol;
 pub mod provider;
 pub mod recovery;
 pub mod torture;
+pub mod updater;
 pub mod workspace;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");

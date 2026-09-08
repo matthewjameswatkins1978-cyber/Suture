@@ -102,6 +102,8 @@ pub fn plan(
                 target: heading.clone(),
                 count: starts.len(),
                 candidates: Vec::new(),
+                candidates_returned: 0,
+                truncated: false,
             }
         }));
     }
@@ -254,6 +256,8 @@ fn plan_list_item(text: &str, op: &MarkdownOperation) -> Result<Vec<ByteEdit>, M
             target: target.clone(),
             count: matches.len(),
             candidates: Vec::new(),
+            candidates_returned: 0,
+            truncated: false,
         }));
     }
     if matches.is_empty() {
@@ -363,6 +367,8 @@ fn plan_fenced_block(text: &str, op: &MarkdownOperation) -> Result<Vec<ByteEdit>
             target: info.clone(),
             count: openings.len(),
             candidates: Vec::new(),
+            candidates_returned: 0,
+            truncated: false,
         }));
     }
     let (_, close_start, _) = openings[0];

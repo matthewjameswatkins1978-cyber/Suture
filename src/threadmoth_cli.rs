@@ -13,16 +13,18 @@ use std::{
 use threadmoth::{
     pipeline::execute_request,
     protocol::{
-        Certificate, CommitGuarantee, EffectBudget, EffectUsage, Outcome, PreservationFacts,
-        RefusalReason, Request, StructuralValidation, TransactionCertificate, TransactionRequest,
+        Assertion, Certificate, CommitGuarantee, EffectBudget, EffectUsage, Outcome,
+        PlanApplyResult, PreparedPlan, PreservationFacts, RefusalReason, Request,
+        StructuralValidation, TransactionCertificate, TransactionRequest, MAX_PLAN_BYTES,
         MAX_REQUEST_BYTES, PROTOCOL_VERSION,
     },
     workspace::Workspace,
 };
 
 use cli::{
-    BenchmarkArgs, BenchmarkProfile, CapabilitiesArgs, Cli, Command, CompletionShell, HelpArgs,
-    RecoverArgs, SchemaArgs, SuggestArgs, THREADMOTH_VERSION,
+    ApplyPlanArgs, BenchmarkArgs, BenchmarkProfile, CapabilitiesArgs, Cli, Command,
+    CompletionShell, HelpArgs, PlanArgs, RecoverArgs, SchemaArgs, SuggestArgs, UpdateArgs,
+    THREADMOTH_VERSION,
 };
 
 fn main() {
@@ -33,6 +35,8 @@ fn main() {
         Command::Transact(args) => {
             run_transaction(args.request.as_deref(), args.preview, args.summary)
         }
+        Command::Plan(args) => run_plan(args),
+        Command::ApplyPlan(args) => run_apply_plan(args),
         Command::TransactionPreview(args) => {
             run_transaction(args.request.as_deref(), true, args.summary)
         }
@@ -42,14 +46,344 @@ fn main() {
         Command::Benchmark(args) => run_benchmark(args),
         Command::Torture { json } => std::process::exit(threadmoth::torture::run(json)),
         Command::Help(args) => run_help(args),
-        Command::Explain { code, json } => print_explain(&code, json),
+        Command::Explain { code, plan, json } => {
+            if let Some(plan) = plan {
+                run_explain_plan(&plan, json);
+            } else if let Some(code) = code {
+                print_explain(&code, json);
+            }
+        }
         Command::Suggest(args) => run_suggest(args),
         Command::Inspect { path } => run_inspect(&path),
         Command::Schema(args) => run_schema(args),
         Command::Doctor => run_doctor(),
+        Command::Update(args) => run_update(args),
         Command::Completions { shell } => run_completions(shell),
         Command::Manpage { output } => run_manpage(output.as_deref()),
         Command::Mcp => cli_mcp::run_mcp(),
+    }
+}
+
+fn run_update(args: UpdateArgs) {
+    let installation = threadmoth::updater::installation_kind();
+    if !installation.is_standalone() {
+        let report = threadmoth::updater::UpdateReport::refused(
+            installation,
+            threadmoth::updater::UpdateErrorKind::UnsupportedInstall,
+            "self-update is disabled for package-managed installations",
+        );
+        print_update_report(&report, args.json);
+        std::process::exit(2);
+    }
+
+    let info = match threadmoth::updater::discover(args.version.as_deref()) {
+        Ok(info) => info,
+        Err(error) => {
+            let report = threadmoth::updater::UpdateReport::from_error(error);
+            print_update_report(&report, args.json);
+            std::process::exit(report.exit_code());
+        }
+    };
+    if info.is_current() {
+        let report = info.into_report("up_to_date");
+        print_update_report(&report, args.json);
+        return;
+    }
+
+    let available = info.available_version.clone().unwrap_or_default();
+    if args.check {
+        let report = info.into_report("update_available");
+        print_update_report(&report, args.json);
+        return;
+    }
+
+    if !args.yes {
+        print!("Update {} → {}? [Y/n] ", info.current_version, available);
+        let _ = io::stdout().flush();
+        let mut answer = String::new();
+        if io::stdin().read_line(&mut answer).is_err()
+            || matches!(answer.trim().to_ascii_lowercase().as_str(), "n" | "no")
+        {
+            let report = info.into_report("refused");
+            print_update_report(&report, args.json);
+            std::process::exit(2);
+        }
+    }
+
+    match threadmoth::updater::install(&info) {
+        Ok(report) => print_update_report(&report, args.json),
+        Err(error) => {
+            let report = threadmoth::updater::UpdateReport::from_error(error);
+            print_update_report(&report, args.json);
+            std::process::exit(report.exit_code());
+        }
+    }
+}
+
+fn print_update_report(report: &threadmoth::updater::UpdateReport, json: bool) {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report).unwrap());
+        return;
+    }
+    match report.status.as_str() {
+        "up_to_date" => println!("Threadmoth {} is already current.", report.current_version),
+        "update_available" => println!(
+            "Threadmoth {} is available.\nPlatform: {}\nVerification: {}",
+            report.available_version.as_deref().unwrap_or("unknown"),
+            report.platform,
+            report.verification
+        ),
+        "updated" => println!(
+            "Updated Threadmoth {} → {}",
+            report.current_version,
+            report.available_version.as_deref().unwrap_or("unknown")
+        ),
+        "refused" | "failed" => eprintln!(
+            "Update {}: {}",
+            report.status,
+            report.error.as_deref().unwrap_or("unknown error")
+        ),
+        _ => println!("Update status: {}", report.status),
+    }
+}
+
+fn run_plan(args: PlanArgs) {
+    let input = match read_request_input(args.request.as_deref()) {
+        Ok(input) => input,
+        Err(RequestInputError::TooLarge(actual)) => {
+            eprintln!("plan input exceeds {MAX_REQUEST_BYTES} bytes (actual: {actual})");
+            std::process::exit(2)
+        }
+        Err(RequestInputError::Io(error)) => {
+            eprintln!("plan input read failed: {error}");
+            std::process::exit(3)
+        }
+    };
+    let kind = match parse_plan_input(&input) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("plan input refused: {error}");
+            std::process::exit(2)
+        }
+    };
+    let root = env::current_dir().unwrap_or_else(|_| ".".into());
+    let workspace = match Workspace::new(root) {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            eprintln!("workspace initialization failed: {error}");
+            std::process::exit(3)
+        }
+    };
+    let plan = match kind {
+        PlanInput::Request {
+            request,
+            assertions,
+        } => match threadmoth::pipeline::prepare_request_plan(&workspace, &request, assertions) {
+            Ok(plan) => plan,
+            Err(certificate) => {
+                emit_certificate(&certificate, true, args.summary);
+                std::process::exit(2)
+            }
+        },
+        PlanInput::Transaction {
+            transaction,
+            assertions,
+        } => match threadmoth::pipeline::prepare_transaction_plan(
+            &workspace,
+            &transaction,
+            assertions,
+        ) {
+            Ok(plan) => plan,
+            Err(certificate) => {
+                emit_transaction_certificate(&certificate, true, args.summary);
+                std::process::exit(2)
+            }
+        },
+    };
+    let rendered = serde_json::to_string_pretty(&plan).expect("prepared plan serialises");
+    if let Some(output) = args.output {
+        if let Err(error) = fs::write(&output, format!("{rendered}\n")) {
+            eprintln!("cannot write plan {}: {error}", output.display());
+            std::process::exit(3)
+        }
+    }
+    if args.summary {
+        println!("THREADMOTH PLAN");
+        println!("Plan ID      {}", plan.plan_id);
+        println!("Operations   {}", plan.operations.len());
+        println!("Assertions   {}", plan.assertions.len());
+        println!("Safety       READY TO APPLY AGAINST EXACT PRE-IMAGES");
+    } else {
+        println!("{rendered}");
+    }
+}
+
+fn run_apply_plan(args: ApplyPlanArgs) {
+    let input = match fs::read(&args.plan) {
+        Ok(input) => input,
+        Err(error) => {
+            eprintln!("plan read failed: {error}");
+            std::process::exit(3)
+        }
+    };
+    if input.len() > MAX_PLAN_BYTES {
+        eprintln!(
+            "plan exceeds {MAX_PLAN_BYTES} bytes (actual: {})",
+            input.len()
+        );
+        std::process::exit(2)
+    }
+    let plan: PreparedPlan = match serde_json::from_slice(&input) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("plan refused: {error}");
+            std::process::exit(2)
+        }
+    };
+    let root = env::current_dir().unwrap_or_else(|_| ".".into());
+    let workspace = match Workspace::new(root) {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            eprintln!("workspace initialization failed: {error}");
+            std::process::exit(3)
+        }
+    };
+    let result = threadmoth::pipeline::apply_prepared_plan(&workspace, &plan);
+    let outcome = match &result {
+        PlanApplyResult::Certificate(certificate) => {
+            if args.summary {
+                print_certificate_summary(certificate, false);
+            } else {
+                println!("{}", serde_json::to_string_pretty(certificate).unwrap());
+            }
+            certificate.outcome.clone()
+        }
+        PlanApplyResult::Transaction(certificate) => {
+            if args.summary {
+                print_transaction_summary(certificate, false);
+            } else {
+                println!("{}", serde_json::to_string_pretty(certificate).unwrap());
+            }
+            certificate.outcome.clone()
+        }
+    };
+    exit_for_outcome(outcome);
+}
+
+fn run_explain_plan(path: &Path, json: bool) {
+    let input = match fs::read(path) {
+        Ok(input) => input,
+        Err(error) => {
+            eprintln!("plan read failed: {error}");
+            std::process::exit(3)
+        }
+    };
+    if input.len() > MAX_PLAN_BYTES {
+        eprintln!(
+            "plan exceeds {MAX_PLAN_BYTES} bytes (actual: {})",
+            input.len()
+        );
+        std::process::exit(2)
+    }
+    let plan: PreparedPlan = match serde_json::from_slice(&input) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("plan refused: {error}");
+            std::process::exit(2)
+        }
+    };
+    let workspace = env::current_dir()
+        .ok()
+        .and_then(|root| Workspace::new(root).ok());
+    let refusal = workspace
+        .as_ref()
+        .and_then(|workspace| threadmoth::pipeline::check_prepared_plan(workspace, &plan).err());
+    let safe = refusal.is_none();
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "plan_id": plan.plan_id,
+                "protocol_version": plan.protocol_version,
+                "operations": plan.operations.len(),
+                "assertions": plan.assertions.len(),
+                "safe_to_apply": safe,
+                "refusal_code": refusal.as_ref().map(|reason| reason.code()),
+                "refusal": refusal
+            })
+        );
+    } else {
+        println!("Plan {}", plan.plan_id);
+        println!("Protocol     {}", plan.protocol_version);
+        println!("Operations   {}", plan.operations.len());
+        for operation in &plan.operations {
+            println!(
+                "File         {}\nProvider     {}\nPre-image    {}\nEdits        {}\nProspective  {}",
+                operation.file_path,
+                operation.provider,
+                operation.pre_hash,
+                operation.edits.len(),
+                operation.prospective_hash
+            );
+        }
+        println!("Assertions   {}", plan.assertions.len());
+        println!(
+            "Safe to apply: {}",
+            if safe {
+                "YES (pre-images rechecked at apply)"
+            } else {
+                "NO"
+            }
+        );
+        if let Some(reason) = refusal {
+            println!("Reason: {} ({reason:?})", reason.code());
+        }
+    }
+}
+
+#[allow(clippy::large_enum_variant)]
+enum PlanInput {
+    Request {
+        request: Request,
+        assertions: Vec<Assertion>,
+    },
+    Transaction {
+        transaction: TransactionRequest,
+        assertions: Vec<Assertion>,
+    },
+}
+
+fn parse_plan_input(input: &str) -> Result<PlanInput, String> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(input).map_err(|error| error.to_string())?;
+    let assertions = value
+        .as_object_mut()
+        .and_then(|object| object.remove("assertions"))
+        .map(|value| {
+            serde_json::from_value::<Vec<Assertion>>(value).map_err(|error| error.to_string())
+        })
+        .transpose()?
+        .unwrap_or_default();
+    if let Some(envelope) = value
+        .as_object_mut()
+        .and_then(|object| object.remove("request"))
+    {
+        value = envelope;
+    }
+    if value.get("transaction_id").is_some() {
+        let transaction = serde_json::from_value::<TransactionRequest>(value)
+            .map_err(|error| error.to_string())?;
+        Ok(PlanInput::Transaction {
+            transaction,
+            assertions,
+        })
+    } else {
+        let request =
+            serde_json::from_value::<Request>(value).map_err(|error| error.to_string())?;
+        Ok(PlanInput::Request {
+            request,
+            assertions,
+        })
     }
 }
 
@@ -545,10 +879,20 @@ fn run_doctor() {
         .join(" ");
     let shell = detected_shell();
     let path_status = current_exe_on_path();
+    let installation = threadmoth::updater::installation_kind();
+    let executable = env::current_exe()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    let self_update = if installation.is_standalone() {
+        "available (explicit: threadmoth update)"
+    } else {
+        "disabled (package-managed or ambiguous installation)"
+    };
     println!(
-        "threadmoth doctor\nversion: {THREADMOTH_VERSION}\nos: {}\narch: {}\nworkspace: {workspace}\nprotocol: {PROTOCOL_VERSION}\nproviders: {providers}\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available\nshell: {shell}\npath: {}\ncompletion: available (threadmoth completions {shell})\nmanpage: available (threadmoth manpage)",
+        "threadmoth doctor\nversion: {THREADMOTH_VERSION}\nos: {}\narch: {}\nworkspace: {workspace}\nprotocol: {PROTOCOL_VERSION}\nproviders: {providers}\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available\ninstallation: {}\nexecutable: {executable}\nself-update: {self_update}\nshell: {shell}\npath: {}\ncompletion: available (threadmoth completions {shell})\nmanpage: available (threadmoth manpage)",
         env::consts::OS,
         env::consts::ARCH,
+        installation.label(),
         if path_status {
             "configured"
         } else {

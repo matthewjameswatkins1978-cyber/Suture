@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::result_large_err, clippy::type_complexity)]
 
 use crate::diff_planner;
 use crate::engine::{apply_byte_edits, compute_sha256, ByteEdit};
@@ -6,10 +7,12 @@ use crate::lifecycle::FileOperation;
 use crate::path::PathNormalizer;
 use crate::pattern::{self, PatternError};
 use crate::protocol::{
-    candidate_selection_id, ByteRange, CandidateGuard, Certificate, CommitGuarantee,
-    DesiredStateEvidence, DesiredStateOperation, EffectBudget, EffectUsage, FailureReason,
-    MutationPlan, OperationPayload, Outcome, PreservationFacts, RefusalReason, Request,
-    StructuralValidation, TransactionCertificate, TransactionRequest, MAX_FILE_BYTES,
+    candidate_selection_id, Assertion, ByteEdit as PlanByteEdit, ByteRange, CandidateGuard,
+    Certificate, CommitGuarantee, DesiredStateEvidence, DesiredStateOperation, EffectBudget,
+    EffectUsage, FailureReason, MutationPlan, OperationPayload, Outcome, PlanApplyResult,
+    PreparedPlan, PreparedPlanOperation, PreservationFacts, RefusalReason, Request,
+    StructuralValidation, TransactionCertificate, TransactionRequest, MAX_ASSERTIONS,
+    MAX_ASSERTION_LITERAL_BYTES, MAX_FILE_BYTES, MAX_PLAN_BYTES, MAX_PLAN_OPERATIONS,
     MAX_TRANSACTION_REQUESTS, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use crate::provider::code::{self, CodeError, CodeOperation};
@@ -381,6 +384,7 @@ struct PreparedContent {
     path: String,
     original: Vec<u8>,
     candidate: Vec<u8>,
+    edits: Vec<ByteEdit>,
     certificate: Certificate,
 }
 
@@ -577,8 +581,888 @@ fn prepare_content_request(
         path: file_path,
         original,
         candidate,
+        edits,
         certificate,
     })
+}
+
+/// Prepare an exact, serialisable plan without writing any bytes. The plan
+/// contains the provider's resolved edits and the observed pre-image hash, so
+/// a later apply operation can refuse stale or tampered input without asking a
+/// provider to guess a new location.
+pub fn prepare_request_plan(
+    workspace: &Workspace,
+    request: &Request,
+    assertions: Vec<Assertion>,
+) -> Result<PreparedPlan, Certificate> {
+    if assertions.len() > MAX_ASSERTIONS {
+        return Err(refusal(
+            request,
+            &request.file_path,
+            provider_name(&request.operation),
+            RefusalReason::PlanTooLarge {
+                dimension: "assertions".into(),
+                limit: MAX_ASSERTIONS,
+                actual: assertions.len(),
+            },
+            String::new(),
+        ));
+    }
+    if assertions.iter().any(assertion_is_too_large) {
+        return Err(refusal(
+            request,
+            &request.file_path,
+            provider_name(&request.operation),
+            RefusalReason::PlanTooLarge {
+                dimension: "assertion_literal_bytes".into(),
+                limit: MAX_ASSERTION_LITERAL_BYTES,
+                actual: MAX_ASSERTION_LITERAL_BYTES.saturating_add(1),
+            },
+            String::new(),
+        ));
+    }
+    let prepared = prepare_content_request(workspace, request)?;
+    let mut overrides = std::collections::HashMap::new();
+    overrides.insert(prepared.path.clone(), prepared.candidate.clone());
+    if let Err(failure) = evaluate_assertions(workspace, &assertions, &overrides, "prospective") {
+        return Err(refusal(
+            request,
+            &prepared.path,
+            provider_name(&request.operation),
+            failure,
+            prepared.certificate.pre_hash.clone(),
+        ));
+    }
+    let mut planned_request = request.clone();
+    planned_request.expected_pre_hash = Some(prepared.certificate.pre_hash.clone());
+    let operation = PreparedPlanOperation {
+        file_path: prepared.path.clone(),
+        provider: provider_name(&request.operation).into(),
+        request: planned_request,
+        pre_hash: prepared.certificate.pre_hash.clone(),
+        edits: prepared
+            .edits
+            .iter()
+            .map(|edit| PlanByteEdit {
+                offset: edit.start,
+                delete_len: edit.end.saturating_sub(edit.start),
+                replacement: edit.replacement.clone(),
+            })
+            .collect(),
+        prospective_hash: prepared
+            .certificate
+            .post_hash
+            .clone()
+            .unwrap_or_else(|| prepared.certificate.pre_hash.clone()),
+    };
+    let mut plan = PreparedPlan {
+        schema_version: "1.0".into(),
+        protocol_version: request.version.clone(),
+        plan_id: String::new(),
+        request_id: request_id(request),
+        transaction_id: None,
+        operations: vec![operation],
+        assertions,
+        budget: request.budget.clone(),
+    };
+    plan.plan_id = plan_identity(&plan);
+    if serialized_plan_size(&plan) > MAX_PLAN_BYTES {
+        return Err(refusal(
+            request,
+            &prepared.path,
+            provider_name(&request.operation),
+            RefusalReason::PlanTooLarge {
+                dimension: "plan_bytes".into(),
+                limit: MAX_PLAN_BYTES,
+                actual: serialized_plan_size(&plan),
+            },
+            prepared.certificate.pre_hash,
+        ));
+    }
+    Ok(plan)
+}
+
+/// Prepare a multi-file transaction as one portable plan. Lifecycle requests
+/// remain deliberately unsupported here; existing lifecycle and transaction
+/// paths continue to own those semantics.
+pub fn prepare_transaction_plan(
+    workspace: &Workspace,
+    transaction: &TransactionRequest,
+    assertions: Vec<Assertion>,
+) -> Result<PreparedPlan, TransactionCertificate> {
+    if transaction.requests.is_empty() || transaction.requests.len() > MAX_PLAN_OPERATIONS {
+        return Err(transaction_refusal(
+            transaction,
+            RefusalReason::PlanTooLarge {
+                dimension: "operations".into(),
+                limit: MAX_PLAN_OPERATIONS,
+                actual: transaction.requests.len(),
+            },
+        ));
+    }
+    if assertions.len() > MAX_ASSERTIONS || assertions.iter().any(assertion_is_too_large) {
+        return Err(transaction_refusal(
+            transaction,
+            RefusalReason::PlanTooLarge {
+                dimension: "assertions".into(),
+                limit: MAX_ASSERTIONS,
+                actual: assertions.len(),
+            },
+        ));
+    }
+    let mut operations = Vec::with_capacity(transaction.requests.len());
+    let mut overrides = std::collections::HashMap::new();
+    let mut certificates = Vec::new();
+    for request in &transaction.requests {
+        if matches!(request.operation, OperationPayload::File(_)) {
+            return Err(transaction_refusal(
+                transaction,
+                RefusalReason::UnsupportedOperation {
+                    operation:
+                        "filesystem lifecycle operations are not supported in prepared plans".into(),
+                },
+            ));
+        }
+        let prepared = match prepare_content_request(workspace, request) {
+            Ok(value) => value,
+            Err(certificate) => {
+                return Err(TransactionCertificate {
+                    protocol_version: transaction.version.clone(),
+                    transaction_id: transaction.transaction_id.clone(),
+                    outcome: certificate.outcome.clone(),
+                    certificates: vec![certificate.clone()],
+                    rollback_state: "not_started".into(),
+                    transaction_guarantee: "not_committed".into(),
+                    refusal_reason: certificate.refusal_reason.clone(),
+                    failure_reason: certificate.failure_reason.clone(),
+                    reason_code: certificate.reason_code.clone(),
+                })
+            }
+        };
+        overrides.insert(prepared.path.clone(), prepared.candidate.clone());
+        let mut planned_request = request.clone();
+        planned_request.expected_pre_hash = Some(prepared.certificate.pre_hash.clone());
+        operations.push(PreparedPlanOperation {
+            file_path: prepared.path.clone(),
+            provider: provider_name(&request.operation).into(),
+            request: planned_request,
+            pre_hash: prepared.certificate.pre_hash.clone(),
+            edits: prepared
+                .edits
+                .iter()
+                .map(|edit| PlanByteEdit {
+                    offset: edit.start,
+                    delete_len: edit.end.saturating_sub(edit.start),
+                    replacement: edit.replacement.clone(),
+                })
+                .collect(),
+            prospective_hash: prepared
+                .certificate
+                .post_hash
+                .clone()
+                .unwrap_or_else(|| prepared.certificate.pre_hash.clone()),
+        });
+        certificates.push(prepared.certificate);
+    }
+    if let Err(failure) = evaluate_assertions(workspace, &assertions, &overrides, "prospective") {
+        return Err(transaction_refusal(transaction, failure));
+    }
+    let mut plan = PreparedPlan {
+        schema_version: "1.0".into(),
+        protocol_version: transaction.version.clone(),
+        plan_id: String::new(),
+        request_id: transaction.transaction_id.clone(),
+        transaction_id: Some(transaction.transaction_id.clone()),
+        operations,
+        assertions,
+        budget: transaction.budget.clone(),
+    };
+    plan.plan_id = plan_identity(&plan);
+    if serialized_plan_size(&plan) > MAX_PLAN_BYTES {
+        return Err(transaction_refusal(
+            transaction,
+            RefusalReason::PlanTooLarge {
+                dimension: "plan_bytes".into(),
+                limit: MAX_PLAN_BYTES,
+                actual: serialized_plan_size(&plan),
+            },
+        ));
+    }
+    Ok(plan)
+}
+
+fn assertion_is_too_large(assertion: &Assertion) -> bool {
+    match assertion {
+        Assertion::FileExists { path } | Assertion::FileAbsent { path } => {
+            path.len() > MAX_ASSERTION_LITERAL_BYTES
+        }
+        Assertion::Sha256 { path, equals } => {
+            path.len().saturating_add(equals.len()) > MAX_ASSERTION_LITERAL_BYTES
+        }
+        Assertion::LiteralCount {
+            path,
+            literal,
+            exactly: _,
+            minimum: _,
+            maximum: _,
+        } => path.len().saturating_add(literal.len()) > MAX_ASSERTION_LITERAL_BYTES,
+    }
+}
+
+fn plan_identity(plan: &PreparedPlan) -> String {
+    let mut semantic = plan.clone();
+    semantic.plan_id.clear();
+    let bytes = serde_json::to_vec(&semantic).expect("prepared plan is serialisable");
+    format!("sha256:{}", compute_sha256(&bytes))
+}
+
+fn serialized_plan_size(plan: &PreparedPlan) -> usize {
+    serde_json::to_vec(plan)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX)
+}
+
+/// Apply an exact prepared plan. The operation is intentionally independent of
+/// provider relocation: it rechecks the stored request guards and then applies
+/// only the stored byte edits against each exact pre-image.
+pub fn apply_prepared_plan(workspace: &Workspace, plan: &PreparedPlan) -> PlanApplyResult {
+    if plan.schema_version != "1.0" {
+        return plan_failure_result(
+            workspace,
+            plan,
+            RefusalReason::PlanInvalid {
+                details: format!("unsupported plan schema {}", plan.schema_version),
+            },
+        );
+    }
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&plan.protocol_version.as_str()) {
+        return plan_failure_result(
+            workspace,
+            plan,
+            RefusalReason::UnsupportedProtocolVersion {
+                requested: plan.protocol_version.clone(),
+                supported: SUPPORTED_PROTOCOL_VERSIONS.join(", "),
+            },
+        );
+    }
+    if plan.operations.is_empty() || plan.operations.len() > MAX_PLAN_OPERATIONS {
+        return plan_failure_result(
+            workspace,
+            plan,
+            RefusalReason::PlanTooLarge {
+                dimension: "operations".into(),
+                limit: MAX_PLAN_OPERATIONS,
+                actual: plan.operations.len(),
+            },
+        );
+    }
+    if plan_identity(plan) != plan.plan_id {
+        return plan_failure_result(
+            workspace,
+            plan,
+            RefusalReason::PlanInvalid {
+                details: "plan_id does not match the deterministic semantic plan identity".into(),
+            },
+        );
+    }
+    if serialized_plan_size(plan) > MAX_PLAN_BYTES {
+        return plan_failure_result(
+            workspace,
+            plan,
+            RefusalReason::PlanTooLarge {
+                dimension: "plan_bytes".into(),
+                limit: MAX_PLAN_BYTES,
+                actual: serialized_plan_size(plan),
+            },
+        );
+    }
+    let mut prepared = Vec::with_capacity(plan.operations.len());
+    let mut overrides = std::collections::HashMap::new();
+    let mut aggregate = zero_effect();
+    for operation in &plan.operations {
+        let path = match workspace
+            .resolve_namespaced_path(&operation.file_path, &operation.request.namespace)
+        {
+            Ok(path) => path,
+            Err(error) => return plan_failure_result(workspace, plan, workspace_reason(error)),
+        };
+        let original = match workspace.read_file(&path) {
+            Ok(bytes) => bytes,
+            Err(error) => return plan_failure_result(workspace, plan, workspace_reason(error)),
+        };
+        let actual_hash = compute_sha256(&original);
+        if actual_hash != normalize_hash(&operation.pre_hash) {
+            return plan_failure_result(
+                workspace,
+                plan,
+                RefusalReason::PlanStale {
+                    path: operation.file_path.clone(),
+                    expected_hash: normalize_hash(&operation.pre_hash),
+                    actual_hash,
+                },
+            );
+        }
+        let stored_edits: Vec<ByteEdit> = operation
+            .edits
+            .iter()
+            .map(|edit| ByteEdit {
+                start: edit.offset,
+                end: edit.offset.saturating_add(edit.delete_len),
+                replacement: edit.replacement.clone(),
+            })
+            .collect();
+        let replanned = match plan_edits(&original, &operation.request, &path, &actual_hash) {
+            Ok(edits) => edits,
+            Err((reason, _)) => return plan_failure_result(workspace, plan, reason),
+        };
+        if replanned != stored_edits {
+            return plan_failure_result(
+                workspace,
+                plan,
+                RefusalReason::PlanInvalid {
+                    details: format!(
+                        "provider resolution no longer matches stored edits for {}",
+                        operation.file_path
+                    ),
+                },
+            );
+        }
+        let candidate = match apply_byte_edits(&original, &stored_edits) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return plan_failure_result(
+                    workspace,
+                    plan,
+                    RefusalReason::PlanInvalid {
+                        details: format!("stored byte edits are invalid: {error}"),
+                    },
+                )
+            }
+        };
+        let effect = effect_usage(
+            &original,
+            &candidate,
+            &stored_edits,
+            &operation.request.budget,
+        );
+        if let Some((dimension, limit, actual)) =
+            budget_violation(&effect, &operation.request.budget)
+        {
+            return plan_failure_result(
+                workspace,
+                plan,
+                RefusalReason::EffectBudgetExceeded {
+                    dimension,
+                    limit,
+                    actual,
+                },
+            );
+        }
+        aggregate.files += effect.files;
+        aggregate.matches += effect.matches;
+        aggregate.changed_regions += effect.changed_regions;
+        aggregate.changed_lines += effect.changed_lines;
+        aggregate.changed_bytes += effect.changed_bytes;
+        overrides.insert(operation.file_path.clone(), candidate.clone());
+        prepared.push((path, original, candidate, stored_edits));
+    }
+    if let Some((dimension, limit, actual)) = budget_violation(&aggregate, &plan.budget) {
+        return plan_failure_result(
+            workspace,
+            plan,
+            RefusalReason::EffectBudgetExceeded {
+                dimension,
+                limit,
+                actual,
+            },
+        );
+    }
+    if let Err(reason) = evaluate_assertions(workspace, &plan.assertions, &overrides, "prospective")
+    {
+        return plan_failure_result(workspace, plan, reason);
+    }
+    let transaction_id = plan
+        .transaction_id
+        .clone()
+        .unwrap_or_else(|| format!("plan-{}", &plan.plan_id[7..23.min(plan.plan_id.len())]));
+    let entries: Vec<JournalEntry> = prepared
+        .iter()
+        .map(|(path, original, candidate, _)| JournalEntry {
+            path: path.clone(),
+            pre_hash: compute_sha256(original),
+            candidate_hash: compute_sha256(candidate),
+            original: original.clone(),
+            candidate: candidate.clone(),
+        })
+        .collect();
+    let journal = Journal {
+        protocol_version: plan.protocol_version.clone(),
+        transaction_id: transaction_id.clone(),
+        entries,
+    };
+    let transaction = TransactionRequest {
+        version: plan.protocol_version.clone(),
+        transaction_id,
+        requests: plan
+            .operations
+            .iter()
+            .map(|operation| operation.request.clone())
+            .collect(),
+        budget: plan.budget.clone(),
+    };
+    let aggregate_files = aggregate.files;
+    let result = commit_prepared_plan(
+        workspace,
+        &transaction,
+        &journal,
+        aggregate,
+        prepared,
+        &plan.assertions,
+    );
+    match result {
+        Ok(certificates) => {
+            if plan.operations.len() == 1 {
+                PlanApplyResult::Certificate(certificates.into_iter().next().unwrap())
+            } else {
+                PlanApplyResult::Transaction(TransactionCertificate {
+                    protocol_version: plan.protocol_version.clone(),
+                    transaction_id: plan.transaction_id.clone().unwrap_or_default(),
+                    outcome: if aggregate_files == 0 {
+                        Outcome::NoChange
+                    } else {
+                        Outcome::Applied
+                    },
+                    certificates,
+                    rollback_state: "not_required".into(),
+                    transaction_guarantee: "transactional_with_rollback".into(),
+                    refusal_reason: None,
+                    failure_reason: None,
+                    reason_code: None,
+                })
+            }
+        }
+        Err(certificate) => {
+            if plan.operations.len() == 1 {
+                PlanApplyResult::Certificate(certificate)
+            } else {
+                PlanApplyResult::Transaction(TransactionCertificate {
+                    protocol_version: plan.protocol_version.clone(),
+                    transaction_id: plan.transaction_id.clone().unwrap_or_default(),
+                    outcome: certificate.outcome,
+                    certificates: Vec::new(),
+                    rollback_state: certificate.recovery_state,
+                    transaction_guarantee: "transactional_with_rollback".into(),
+                    refusal_reason: certificate.refusal_reason,
+                    failure_reason: certificate.failure_reason,
+                    reason_code: certificate.reason_code,
+                })
+            }
+        }
+    }
+}
+
+fn commit_prepared_plan(
+    workspace: &Workspace,
+    transaction: &TransactionRequest,
+    journal: &Journal,
+    aggregate: EffectUsage,
+    prepared: Vec<(String, Vec<u8>, Vec<u8>, Vec<ByteEdit>)>,
+    assertions: &[Assertion],
+) -> Result<Vec<Certificate>, Certificate> {
+    if let Err(error) = recovery::check_journal_size(journal) {
+        return Err(failure(
+            &transaction.requests[0],
+            &journal.entries[0].path,
+            "plan",
+            journal.entries[0].pre_hash.clone(),
+            FailureReason::CommitFailure {
+                message: error.to_string(),
+            },
+        ));
+    }
+    if let Err(error) = recovery::write_journal(workspace, journal) {
+        return Err(failure(
+            &transaction.requests[0],
+            &journal.entries[0].path,
+            "plan",
+            journal.entries[0].pre_hash.clone(),
+            FailureReason::CommitFailure {
+                message: error.to_string(),
+            },
+        ));
+    }
+    let mut committed = Vec::new();
+    for entry in &journal.entries {
+        if let Err(error) =
+            workspace.write_file_atomic_checked(&entry.path, &entry.pre_hash, &entry.candidate)
+        {
+            let rollback_ok = rollback_entries(workspace, &committed);
+            return Err(failure(
+                &transaction.requests[0],
+                &entry.path,
+                "plan",
+                entry.pre_hash.clone(),
+                FailureReason::CommitFailure {
+                    message: format!(
+                        "{} (rollback: {})",
+                        error,
+                        if rollback_ok {
+                            "ok"
+                        } else {
+                            "manual recovery required"
+                        }
+                    ),
+                },
+            ));
+        }
+        committed.push(entry);
+    }
+    let mut overrides = std::collections::HashMap::new();
+    for entry in &journal.entries {
+        let landed = match workspace.read_file(&entry.path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let rollback_ok = rollback_entries(workspace, &committed);
+                return Err(failure(
+                    &transaction.requests[0],
+                    &entry.path,
+                    "plan",
+                    entry.pre_hash.clone(),
+                    FailureReason::PostCommitVerificationFailure {
+                        expected_hash: entry.candidate_hash.clone(),
+                        actual_hash: format!("read failed: {error}; rollback={rollback_ok}"),
+                    },
+                ));
+            }
+        };
+        if compute_sha256(&landed) != entry.candidate_hash {
+            let actual_hash = compute_sha256(&landed);
+            let rollback_ok = rollback_entries(workspace, &committed);
+            return Err(failure(
+                &transaction.requests[0],
+                &entry.path,
+                "plan",
+                entry.pre_hash.clone(),
+                FailureReason::PostCommitVerificationFailure {
+                    expected_hash: entry.candidate_hash.clone(),
+                    actual_hash: format!("{actual_hash}; rollback={rollback_ok}"),
+                },
+            ));
+        }
+        overrides.insert(entry.path.clone(), landed);
+    }
+    if let Err(reason) = evaluate_assertions(workspace, assertions, &overrides, "committed") {
+        let rollback_ok = rollback_entries(workspace, &committed);
+        return Err(failure(
+            &transaction.requests[0],
+            &journal.entries[0].path,
+            "plan",
+            journal.entries[0].pre_hash.clone(),
+            FailureReason::PostCommitAssertionFailed {
+                assertion: format!("{reason:?}"),
+                expected: "assertion satisfied".into(),
+                observed: format!("rollback={rollback_ok}"),
+                path: journal.entries[0].path.clone(),
+            },
+        ));
+    }
+    let _ = recovery::remove_journal(workspace, &journal.transaction_id);
+    let mut certificates = Vec::new();
+    for (index, (path, original, candidate, edits)) in prepared.into_iter().enumerate() {
+        let request = transaction
+            .requests
+            .get(index)
+            .unwrap_or(&transaction.requests[0]);
+        let mut certificate = completed(
+            request,
+            &path,
+            "plan",
+            compute_sha256(&original),
+            Some(compute_sha256(&candidate)),
+            if original == candidate {
+                Outcome::NoChange
+            } else {
+                Outcome::Applied
+            },
+            changed_ranges(&edits),
+            StructuralValidation::NotApplicable,
+            PreservationFacts::from_bytes(&original, &candidate),
+            CommitGuarantee {
+                mode: "committed_atomic_replace".into(),
+                content_replacement: "atomic replacement after staged flush".into(),
+                permissions: "platform-dependent; not asserted".into(),
+                timestamps: "not preserved".into(),
+                acl_xattr: "unknown".into(),
+            },
+            String::new(),
+            false,
+            effect_usage(&original, &candidate, &edits, &request.budget),
+        );
+        certificate.transaction_guarantee = if aggregate.files > 1 {
+            "transactional_with_rollback".into()
+        } else {
+            "committed_atomic_replace".into()
+        };
+        certificates.push(certificate);
+    }
+    Ok(certificates)
+}
+
+fn rollback_entries(workspace: &Workspace, committed: &[&JournalEntry]) -> bool {
+    committed.iter().rev().all(|entry| {
+        workspace
+            .write_file_atomic_checked(&entry.path, &entry.candidate_hash, &entry.original)
+            .is_ok()
+    })
+}
+
+/// Read-only plan checks used by `explain --plan`. Applying a plan repeats these checks and then
+/// performs the full provider, edit, budget, prospective, journal, commit, and committed-state
+/// verification sequence.
+pub fn check_prepared_plan(
+    workspace: &Workspace,
+    plan: &PreparedPlan,
+) -> Result<(), RefusalReason> {
+    if plan.schema_version != "1.0" {
+        return Err(RefusalReason::PlanInvalid {
+            details: format!("unsupported plan schema {}", plan.schema_version),
+        });
+    }
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&plan.protocol_version.as_str()) {
+        return Err(RefusalReason::UnsupportedProtocolVersion {
+            requested: plan.protocol_version.clone(),
+            supported: SUPPORTED_PROTOCOL_VERSIONS.join(", "),
+        });
+    }
+    if plan.operations.is_empty() || plan.operations.len() > MAX_PLAN_OPERATIONS {
+        return Err(RefusalReason::PlanTooLarge {
+            dimension: "operations".into(),
+            limit: MAX_PLAN_OPERATIONS,
+            actual: plan.operations.len(),
+        });
+    }
+    if plan_identity(plan) != plan.plan_id {
+        return Err(RefusalReason::PlanInvalid {
+            details: "plan_id does not match the deterministic semantic plan identity".into(),
+        });
+    }
+    let size = serialized_plan_size(plan);
+    if size > MAX_PLAN_BYTES {
+        return Err(RefusalReason::PlanTooLarge {
+            dimension: "plan_bytes".into(),
+            limit: MAX_PLAN_BYTES,
+            actual: size,
+        });
+    }
+    for operation in &plan.operations {
+        let path = workspace
+            .resolve_namespaced_path(&operation.file_path, &operation.request.namespace)
+            .map_err(workspace_reason)?;
+        let original = workspace
+            .read_file(&path)
+            .map_err(|error| RefusalReason::PlanInvalid {
+                details: format!("cannot read {}: {error}", operation.file_path),
+            })?;
+        let actual_hash = compute_sha256(&original);
+        if actual_hash != normalize_hash(&operation.pre_hash) {
+            return Err(RefusalReason::PlanStale {
+                path: operation.file_path.clone(),
+                expected_hash: normalize_hash(&operation.pre_hash),
+                actual_hash,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn plan_failure_result(
+    _workspace: &Workspace,
+    plan: &PreparedPlan,
+    reason: RefusalReason,
+) -> PlanApplyResult {
+    let request = plan.operations.first().map(|operation| &operation.request);
+    let certificate = if let Some(request) = request {
+        refusal(
+            request,
+            &plan.operations[0].file_path,
+            "plan",
+            reason,
+            String::new(),
+        )
+    } else {
+        empty_plan_certificate(plan, reason)
+    };
+    if plan.operations.len() <= 1 {
+        PlanApplyResult::Certificate(certificate)
+    } else {
+        PlanApplyResult::Transaction(TransactionCertificate {
+            protocol_version: plan.protocol_version.clone(),
+            transaction_id: plan.transaction_id.clone().unwrap_or_default(),
+            outcome: certificate.outcome.clone(),
+            certificates: vec![certificate.clone()],
+            rollback_state: "not_started".into(),
+            transaction_guarantee: "not_committed".into(),
+            refusal_reason: certificate.refusal_reason.clone(),
+            failure_reason: certificate.failure_reason.clone(),
+            reason_code: certificate.reason_code.clone(),
+        })
+    }
+}
+
+fn empty_plan_certificate(plan: &PreparedPlan, reason: RefusalReason) -> Certificate {
+    Certificate {
+        protocol_version: plan.protocol_version.clone(),
+        request_id: plan.request_id.clone(),
+        outcome: Outcome::Refused,
+        file_path: String::new(),
+        provider: "plan".into(),
+        provider_version: "1.0".into(),
+        expected_cardinality: Default::default(),
+        observed_cardinality: None,
+        pre_hash: String::new(),
+        post_hash: None,
+        changed_ranges: Vec::new(),
+        changed_line_ranges: Vec::new(),
+        diff_summary: None,
+        diff_truncated: false,
+        structural_validation: StructuralValidation::NotApplicable,
+        preservation: PreservationFacts::default(),
+        commit: CommitGuarantee::default(),
+        refusal_reason: Some(reason.clone()),
+        failure_reason: None,
+        reason_code: Some(reason.code().into()),
+        diagnostics: Vec::new(),
+        budget: plan.budget.clone(),
+        effect: zero_effect(),
+        transaction_guarantee: "not_committed".into(),
+        recovery_state: "not_started".into(),
+        desired_state: None,
+    }
+}
+
+fn read_assertion_bytes(
+    workspace: &Workspace,
+    overrides: &std::collections::HashMap<String, Vec<u8>>,
+    path: &str,
+) -> Result<(String, Vec<u8>), String> {
+    let normalized = workspace
+        .resolve_namespaced_path(path, &Default::default())
+        .map_err(|error| error.to_string())?;
+    if let Some(bytes) = overrides.get(&normalized).or_else(|| overrides.get(path)) {
+        return Ok((normalized, bytes.clone()));
+    }
+    workspace
+        .read_file(&normalized)
+        .map(|bytes| (normalized, bytes))
+        .map_err(|error| error.to_string())
+}
+
+fn evaluate_assertions(
+    workspace: &Workspace,
+    assertions: &[Assertion],
+    overrides: &std::collections::HashMap<String, Vec<u8>>,
+    phase: &str,
+) -> Result<(), RefusalReason> {
+    if assertions.len() > MAX_ASSERTIONS || assertions.iter().any(assertion_is_too_large) {
+        return Err(RefusalReason::PlanTooLarge {
+            dimension: "assertions".into(),
+            limit: MAX_ASSERTIONS,
+            actual: assertions.len(),
+        });
+    }
+    for assertion in assertions {
+        let (path, bytes, exists) = match assertion {
+            Assertion::FileExists { path } | Assertion::FileAbsent { path } => {
+                let normalized = workspace
+                    .resolve_namespaced_path(path, &Default::default())
+                    .map_err(|error| RefusalReason::PostconditionFailed {
+                        assertion: format!("{assertion:?}"),
+                        expected: "path contained by workspace".into(),
+                        observed: error.to_string(),
+                        path: path.clone(),
+                        phase: phase.into(),
+                    })?;
+                let exists = overrides.contains_key(&normalized)
+                    || overrides.contains_key(path)
+                    || workspace.read_file(&normalized).is_ok();
+                (normalized, Vec::new(), exists)
+            }
+            Assertion::Sha256 { path, .. } | Assertion::LiteralCount { path, .. } => {
+                match read_assertion_bytes(workspace, overrides, path) {
+                    Ok((normalized, bytes)) => (normalized, bytes, true),
+                    Err(error) => {
+                        return Err(RefusalReason::PostconditionFailed {
+                            assertion: format!("{assertion:?}"),
+                            expected: "file exists and satisfies assertion".into(),
+                            observed: error,
+                            path: path.clone(),
+                            phase: phase.into(),
+                        })
+                    }
+                }
+            }
+        };
+        let (passed, expected, observed) = match assertion {
+            Assertion::FileExists { .. } => (exists, "file exists".into(), exists.to_string()),
+            Assertion::FileAbsent { .. } => (!exists, "file is absent".into(), exists.to_string()),
+            Assertion::Sha256 { equals, .. } => {
+                let observed = compute_sha256(&bytes);
+                (
+                    normalize_hash(equals) == observed,
+                    format!("sha256:{}", normalize_hash(equals)),
+                    format!("sha256:{observed}"),
+                )
+            }
+            Assertion::LiteralCount {
+                literal,
+                exactly,
+                minimum,
+                maximum,
+                ..
+            } => {
+                if literal.is_empty() {
+                    return Err(RefusalReason::PostconditionFailed {
+                        assertion: format!("{assertion:?}"),
+                        expected: "non-empty literal".into(),
+                        observed: "empty literal".into(),
+                        path,
+                        phase: phase.into(),
+                    });
+                }
+                let needle = literal.as_bytes();
+                let mut count = 0;
+                let mut cursor: usize = 0;
+                while cursor.saturating_add(needle.len()) <= bytes.len() {
+                    let Some(relative) = bytes[cursor..]
+                        .windows(needle.len())
+                        .position(|window| window == needle)
+                    else {
+                        break;
+                    };
+                    count += 1;
+                    cursor = cursor.saturating_add(relative + needle.len());
+                }
+                let passed = exactly.is_none_or(|value| count == value)
+                    && minimum.is_none_or(|value| count >= value)
+                    && maximum.is_none_or(|value| count <= value);
+                (
+                    passed,
+                    format!("exactly={exactly:?},minimum={minimum:?},maximum={maximum:?}"),
+                    count.to_string(),
+                )
+            }
+        };
+        if !passed {
+            return Err(RefusalReason::PostconditionFailed {
+                assertion: format!("{assertion:?}"),
+                expected,
+                observed,
+                path,
+                phase: phase.into(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Prepare every member against its accepted source, then commit the complete
