@@ -915,7 +915,7 @@ pub fn capabilities() -> CapabilityManifest {
         "recovery_inspection": true,
         "guard_modes": ["immediate", "strict_snapshot", "region_snapshot", "structural_snapshot"],
         "transaction_capabilities": {"single_file": true, "multi_file": true, "rollback": true, "crash_recovery": true},
-        "features": {"plans": true, "plan_apply": true, "postconditions": true, "candidate_selection": true, "composite_selectors": true},
+        "features": {"plans": true, "plan_apply": true, "postconditions": true, "candidate_selection": true, "composite_selectors": false},
         "supported_assertions": ["file_exists", "file_absent", "sha256", "literal_count"],
         "plan_limits": {"max_plan_bytes": MAX_PLAN_BYTES, "max_plan_operations": MAX_PLAN_OPERATIONS, "max_assertions": MAX_ASSERTIONS, "max_assertion_literal_bytes": MAX_ASSERTION_LITERAL_BYTES, "max_candidate_evidence": 4096},
         "resource_limits": {"max_request_bytes": MAX_REQUEST_BYTES, "max_transaction_requests": MAX_TRANSACTION_REQUESTS, "max_diagnostic_bytes": 4096, "max_pattern_bytes": 8192, "max_file_bytes": MAX_FILE_BYTES},
@@ -982,7 +982,7 @@ pub fn capabilities() -> CapabilityManifest {
             plan_apply: true,
             postconditions: true,
             candidate_selection: true,
-            composite_selectors: true,
+            composite_selectors: false,
         },
         supported_assertions: vec!["file_exists", "file_absent", "sha256", "literal_count"],
         plan_limits: PlanLimits {
