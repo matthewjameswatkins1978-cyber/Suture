@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.1 - Repository and distribution hardening
+
+Threadmoth 1.7.1 keeps the 1.7 agent-usability runtime stable while making the public repository and release process consistent with the Threadmoth identity.
+
+- Renamed the canonical GitHub repository to Threadmoth and updated links and package metadata.
+- Added the native Antigravity adapter manifest and current integration documentation.
+- Preserved refusal-first mutation semantics and published reproducible release artifacts with checksums and a manifest.
+
 ## 1.7.0 - Agent usability
 
 Threadmoth 1.7.0 makes the refusal-first boundary easier for agents to discover, inspect, and recover through.

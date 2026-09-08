@@ -1,14 +1,14 @@
 [package]
 name = "threadmoth"
-version = "1.7.0"
+version = "1.7.1"
 edition = "2021"
 rust-version = "1.85"
 default-run = "threadmoth"
 autobins = false
 description = "Deterministic, source-preserving file mutation for AI agents"
 license = "MIT"
-repository = "https://github.com/matthewjameswatkins1978-cyber/Suture"
-homepage = "https://github.com/matthewjameswatkins1978-cyber/Suture"
+repository = "https://github.com/matthewjameswatkins1978-cyber/Threadmoth"
+homepage = "https://github.com/matthewjameswatkins1978-cyber/Threadmoth"
 keywords = ["file-mutation", "automation", "json", "toml", "cli"]
 categories = ["command-line-utilities", "config"]
 

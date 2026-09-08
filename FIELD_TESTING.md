@@ -61,7 +61,7 @@ Please try Threadmoth on ordinary work and tell us:
 Install the latest release binary on `PATH`, or build/install from source with Rust 1.85+:
 
 ```text
-cargo install --git https://github.com/matthewjameswatkins1978-cyber/Suture --bin threadmoth
+cargo install --git https://github.com/matthewjameswatkins1978-cyber/Threadmoth --bin threadmoth
 ```
 
 Check the installation:

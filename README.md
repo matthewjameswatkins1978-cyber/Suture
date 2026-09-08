@@ -101,7 +101,7 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Threadmoth 1.7.0 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
+Threadmoth 1.7.1 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
 
 ```text
 PASS  8/8 cases · 0 wrong mutations · correctness checked
@@ -113,7 +113,7 @@ Torture uses the same presentation rather than a separate wall of state messages
 
 Download the platform binary from a GitHub release and put `threadmoth` (or `Threadmoth.exe`) on `PATH`.
 
-The current release is [Threadmoth v1.7.0](https://github.com/matthewjameswatkins1978-cyber/Suture/releases/tag/v1.7.0), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
+The current release is [Threadmoth v1.7.1](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.7.1), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
 
 Building from source requires Rust 1.85 or newer:
 
@@ -305,7 +305,7 @@ Threadmoth currently supports:
 
 Providers propose candidates. **Core alone commits them.**
 
-`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.7.0 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
+`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.7.1 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
 
 ## Real-world dogfood: Lantern Keeper
 
