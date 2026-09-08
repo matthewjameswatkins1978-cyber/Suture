@@ -101,7 +101,7 @@ The summary shows the outcome, provider, effect size, budget result, newline/pre
 }
 ```
 
-Threadmoth 1.7.1 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
+Threadmoth 1.8.0 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
 
 ## Shell completion
 
@@ -203,4 +203,4 @@ threadmoth doctor
 
 ## Compatibility policy
 
-Threadmoth 1.7.1 keeps the important pre-1.3 spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. It also accepts protocol 1.1 requests while advertising protocol 1.2 as current.
+Threadmoth 1.8.0 keeps the important pre-1.3 command and provider spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. It accepts protocol 1.1 and 1.2 requests with their promised semantics while advertising protocol 1.3 as current.
