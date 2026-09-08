@@ -101,7 +101,7 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Threadmoth 1.7.0 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
+Threadmoth 1.7.1 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
 
 ```text
 PASS  8/8 cases · 0 wrong mutations · correctness checked
@@ -113,7 +113,7 @@ Torture uses the same presentation rather than a separate wall of state messages
 
 Download the platform binary from a GitHub release and put `threadmoth` (or `Threadmoth.exe`) on `PATH`.
 
-The current release is [Threadmoth v1.7.0](https://github.com/matthewjameswatkins1978-cyber/Suture/releases/tag/v1.7.0), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
+The current release is [Threadmoth v1.7.1](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.7.1), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
 
 Building from source requires Rust 1.85 or newer:
 
@@ -305,7 +305,7 @@ Threadmoth currently supports:
 
 Providers propose candidates. **Core alone commits them.**
 
-`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.7.0 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
+`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.7.1 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
 
 ## Real-world dogfood: Lantern Keeper
 
@@ -368,6 +368,18 @@ Exit codes are:
 ```
 
 This makes Threadmoth easy to drop into agent loops, scripts, orchestration systems, and toolbelts without scraping prose.
+
+  ### Portable agent integrations
+
+Threadmoth also ships a portable [Agent Skill](skills/threadmoth/SKILL.md) for
+agents that support the open `SKILL.md` format. The same skill is bundled as a
+minimal Claude Code plugin and Gemini CLI extension in this repository. These
+adapters teach discovery, bounded requests, preview-first operation, refusal
+handling, and certificate preservation; they do not install or replace the
+`threadmoth` executable. See [agent integration](docs/agent-integration.md) and
+the [distribution ledger](docs/distribution-ledger.md).
+
+Antigravity also has a native [`plugin.json`](plugin.json) manifest and reuses the same Agent Skill. Install it with `agy plugin install <repository>`. Local testing confirmed Antigravity authentication and skill discovery; the end-to-end mutation/refusal/recovery sequence remains pending until the agent completes a safe Threadmoth mutation.
 
 ## Safety model
 
