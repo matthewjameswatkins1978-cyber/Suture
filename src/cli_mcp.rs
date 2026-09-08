@@ -7,7 +7,9 @@ use std::{
 };
 use threadmoth::{
     pipeline::execute_request,
-    protocol::{Request, TransactionRequest, MAX_REQUEST_BYTES, PROTOCOL_VERSION},
+    protocol::{
+        Assertion, PreparedPlan, Request, TransactionRequest, MAX_REQUEST_BYTES, PROTOCOL_VERSION,
+    },
     workspace::Workspace,
 };
 
@@ -126,6 +128,8 @@ fn handle_mcp_message(workspace: &Workspace, request: Value) -> Option<Value> {
                 "result": {"tools": [
                     {"name": "threadmoth_mutate", "description": "Apply one typed Threadmoth mutation and return its certificate", "inputSchema": schema_for!(Request)},
                     {"name": "threadmoth_preview", "description": "Preview one typed Threadmoth mutation without writing", "inputSchema": schema_for!(Request)},
+                    {"name": "threadmoth_plan", "description": "Prepare a deterministic guarded plan without writing", "inputSchema": schema_for!(Request)},
+                    {"name": "threadmoth_apply_plan", "description": "Apply an exact prepared plan after rechecking identity and assertions", "inputSchema": schema_for!(PreparedPlan)},
                     {"name": "threadmoth_inspect", "description": "Read target identity, encoding and newline facts without mutation", "inputSchema": schema_for!(InspectToolArgs)},
                     {"name": "threadmoth_suggest", "description": "Return the existing deterministic request suggestion for a target", "inputSchema": schema_for!(SuggestToolArgs)},
                     {"name": "threadmoth_explain", "description": "Return stable metadata for a refusal or failure reason", "inputSchema": schema_for!(ExplainToolArgs)},
@@ -236,6 +240,41 @@ fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Valu
                 serde_json::to_value(execute_request(workspace, &request, true))
                     .map_err(|e| e.to_string())?,
             )
+        }
+        "threadmoth_plan" => {
+            let mut value = arguments;
+            let assertions = value
+                .as_object_mut()
+                .and_then(|object| object.remove("assertions"))
+                .map(|value| {
+                    serde_json::from_value::<Vec<Assertion>>(value).map_err(|e| e.to_string())
+                })
+                .transpose()?
+                .unwrap_or_default();
+            if value.get("transaction_id").is_some() {
+                let transaction = serde_json::from_value::<TransactionRequest>(value)
+                    .map_err(|e| e.to_string())?;
+                let plan = threadmoth::pipeline::prepare_transaction_plan(
+                    workspace,
+                    &transaction,
+                    assertions,
+                )
+                .map_err(|certificate| serde_json::to_string(&certificate).unwrap())?;
+                serde_json::to_value(plan).map_err(|e| e.to_string())
+            } else {
+                let request =
+                    serde_json::from_value::<Request>(value).map_err(|e| e.to_string())?;
+                let plan =
+                    threadmoth::pipeline::prepare_request_plan(workspace, &request, assertions)
+                        .map_err(|certificate| serde_json::to_string(&certificate).unwrap())?;
+                serde_json::to_value(plan).map_err(|e| e.to_string())
+            }
+        }
+        "threadmoth_apply_plan" => {
+            let plan =
+                serde_json::from_value::<PreparedPlan>(arguments).map_err(|e| e.to_string())?;
+            serde_json::to_value(threadmoth::pipeline::apply_prepared_plan(workspace, &plan))
+                .map_err(|e| e.to_string())
         }
         "threadmoth_transact" | "suture_transact" => {
             let transaction = serde_json::from_value::<TransactionRequest>(arguments)

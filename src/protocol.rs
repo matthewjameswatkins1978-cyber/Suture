@@ -14,13 +14,22 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const PROTOCOL_VERSION: &str = "1.2.0";
+pub const PROTOCOL_VERSION: &str = "1.3.0";
 pub const LEGACY_PROTOCOL_VERSION: &str = "1.1.0";
-pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[PROTOCOL_VERSION, LEGACY_PROTOCOL_VERSION];
+pub const PREVIOUS_PROTOCOL_VERSION: &str = "1.2.0";
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
+    PROTOCOL_VERSION,
+    PREVIOUS_PROTOCOL_VERSION,
+    LEGACY_PROTOCOL_VERSION,
+];
 pub const CANDIDATE_SELECTION_DOMAIN: &str = "threadmoth:candidate-selection:v1";
 pub const MAX_REQUEST_BYTES: usize = 1_048_576;
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_TRANSACTION_REQUESTS: usize = 256;
+pub const MAX_PLAN_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_PLAN_OPERATIONS: usize = 256;
+pub const MAX_ASSERTIONS: usize = 256;
+pub const MAX_ASSERTION_LITERAL_BYTES: usize = 64 * 1024;
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(
@@ -111,6 +120,31 @@ pub struct TransactionRequest {
     pub budget: EffectBudget,
 }
 
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Assertion {
+    FileExists {
+        path: String,
+    },
+    FileAbsent {
+        path: String,
+    },
+    Sha256 {
+        path: String,
+        equals: String,
+    },
+    LiteralCount {
+        path: String,
+        literal: String,
+        #[serde(default)]
+        exactly: Option<usize>,
+        #[serde(default)]
+        minimum: Option<usize>,
+        #[serde(default)]
+        maximum: Option<usize>,
+    },
+}
+
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TransactionCertificate {
@@ -187,6 +221,10 @@ pub enum RefusalReason {
         target: String,
         count: usize,
         candidates: Vec<Candidate>,
+        #[serde(default)]
+        candidates_returned: usize,
+        #[serde(default)]
+        truncated: bool,
     },
     UnsupportedEncoding {
         details: String,
@@ -242,6 +280,26 @@ pub enum RefusalReason {
         selection_id: String,
         details: String,
     },
+    PostconditionFailed {
+        assertion: String,
+        expected: String,
+        observed: String,
+        path: String,
+        phase: String,
+    },
+    PlanInvalid {
+        details: String,
+    },
+    PlanStale {
+        path: String,
+        expected_hash: String,
+        actual_hash: String,
+    },
+    PlanTooLarge {
+        dimension: String,
+        limit: usize,
+        actual: usize,
+    },
 }
 
 impl RefusalReason {
@@ -270,6 +328,10 @@ impl RefusalReason {
             Self::DestinationExists { .. } => "DESTINATION_EXISTS",
             Self::UnmappablePath { .. } => "PATH_UNMAPPABLE",
             Self::CandidateSelectionInvalid { .. } => "CANDIDATE_SELECTION_INVALID",
+            Self::PostconditionFailed { .. } => "POSTCONDITION_FAILED",
+            Self::PlanInvalid { .. } => "PLAN_INVALID",
+            Self::PlanStale { .. } => "PLAN_STALE",
+            Self::PlanTooLarge { .. } => "PLAN_TOO_LARGE",
         }
     }
 }
@@ -336,6 +398,12 @@ pub enum FailureReason {
     Custom {
         message: String,
     },
+    PostCommitAssertionFailed {
+        assertion: String,
+        expected: String,
+        observed: String,
+        path: String,
+    },
 }
 
 impl FailureReason {
@@ -347,6 +415,7 @@ impl FailureReason {
             Self::CommitFailure { .. } | Self::WriteError { .. } => "COMMIT_FAILED",
             Self::PostCommitVerificationFailure { .. } => "POST_COMMIT_VERIFICATION_FAILED",
             Self::Custom { .. } => "FAILED",
+            Self::PostCommitAssertionFailed { .. } => "POSTCONDITION_FAILED",
         }
     }
 }
@@ -383,6 +452,44 @@ pub struct MutationPlan {
     pub edits: Vec<ByteEdit>,
     #[serde(default)]
     pub cardinality: Cardinality,
+}
+
+/// A portable, bounded, exact mutation prepared from a request. Applying this
+/// artifact never asks a provider to relocate an edit: the pre-image hash and
+/// exact byte ranges are authoritative guards.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedPlan {
+    pub schema_version: String,
+    pub protocol_version: String,
+    pub plan_id: String,
+    #[serde(default)]
+    pub request_id: String,
+    #[serde(default)]
+    pub transaction_id: Option<String>,
+    pub operations: Vec<PreparedPlanOperation>,
+    #[serde(default)]
+    pub assertions: Vec<Assertion>,
+    pub budget: EffectBudget,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedPlanOperation {
+    pub file_path: String,
+    pub provider: String,
+    pub request: Request,
+    pub pre_hash: String,
+    pub edits: Vec<ByteEdit>,
+    pub prospective_hash: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[allow(clippy::large_enum_variant)]
+pub enum PlanApplyResult {
+    Certificate(Certificate),
+    Transaction(TransactionCertificate),
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]

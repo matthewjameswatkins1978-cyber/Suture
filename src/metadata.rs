@@ -10,7 +10,8 @@ use crate::path::{PathNamespace, PathNormalizer};
 use crate::pattern::PatternOperation;
 use crate::protocol::{
     CandidateGuard, Cardinality, EffectBudget, OperationPayload, Request, TransactionRequest,
-    MAX_FILE_BYTES, MAX_REQUEST_BYTES, MAX_TRANSACTION_REQUESTS, PROTOCOL_VERSION,
+    MAX_ASSERTIONS, MAX_ASSERTION_LITERAL_BYTES, MAX_FILE_BYTES, MAX_PLAN_BYTES,
+    MAX_PLAN_OPERATIONS, MAX_REQUEST_BYTES, MAX_TRANSACTION_REQUESTS, PROTOCOL_VERSION,
     SUPPORTED_PROTOCOL_VERSIONS,
 };
 use crate::provider::code::CodeOperation;
@@ -84,6 +85,24 @@ pub struct TransactionCapabilities {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct FeatureCapabilities {
+    pub plans: bool,
+    pub plan_apply: bool,
+    pub postconditions: bool,
+    pub candidate_selection: bool,
+    pub composite_selectors: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PlanLimits {
+    pub max_plan_bytes: usize,
+    pub max_plan_operations: usize,
+    pub max_assertions: usize,
+    pub max_assertion_literal_bytes: usize,
+    pub max_candidate_evidence: usize,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CapabilityManifest {
     pub format_version: &'static str,
     pub protocol_versions: Vec<&'static str>,
@@ -105,6 +124,9 @@ pub struct CapabilityManifest {
     pub recovery_inspection: bool,
     pub guard_modes: Vec<&'static str>,
     pub transaction_capabilities: TransactionCapabilities,
+    pub features: FeatureCapabilities,
+    pub supported_assertions: Vec<&'static str>,
+    pub plan_limits: PlanLimits,
     pub resource_limits: ResourceLimits,
     pub effect_budget_dimensions: Vec<&'static str>,
     pub reason_codes: Vec<ReasonMetadata>,
@@ -893,6 +915,9 @@ pub fn capabilities() -> CapabilityManifest {
         "recovery_inspection": true,
         "guard_modes": ["immediate", "strict_snapshot", "region_snapshot", "structural_snapshot"],
         "transaction_capabilities": {"single_file": true, "multi_file": true, "rollback": true, "crash_recovery": true},
+        "features": {"plans": true, "plan_apply": true, "postconditions": true, "candidate_selection": true, "composite_selectors": false},
+        "supported_assertions": ["file_exists", "file_absent", "sha256", "literal_count"],
+        "plan_limits": {"max_plan_bytes": MAX_PLAN_BYTES, "max_plan_operations": MAX_PLAN_OPERATIONS, "max_assertions": MAX_ASSERTIONS, "max_assertion_literal_bytes": MAX_ASSERTION_LITERAL_BYTES, "max_candidate_evidence": 4096},
         "resource_limits": {"max_request_bytes": MAX_REQUEST_BYTES, "max_transaction_requests": MAX_TRANSACTION_REQUESTS, "max_diagnostic_bytes": 4096, "max_pattern_bytes": 8192, "max_file_bytes": MAX_FILE_BYTES},
         "effect_budget_dimensions": ["max_files", "max_matches", "max_changed_regions", "max_changed_lines", "max_changed_bytes", "allowed_path_prefixes"],
         "reason_codes": reason_codes
@@ -951,6 +976,21 @@ pub fn capabilities() -> CapabilityManifest {
             multi_file: true,
             rollback: true,
             crash_recovery: true,
+        },
+        features: FeatureCapabilities {
+            plans: true,
+            plan_apply: true,
+            postconditions: true,
+            candidate_selection: true,
+            composite_selectors: false,
+        },
+        supported_assertions: vec!["file_exists", "file_absent", "sha256", "literal_count"],
+        plan_limits: PlanLimits {
+            max_plan_bytes: MAX_PLAN_BYTES,
+            max_plan_operations: MAX_PLAN_OPERATIONS,
+            max_assertions: MAX_ASSERTIONS,
+            max_assertion_literal_bytes: MAX_ASSERTION_LITERAL_BYTES,
+            max_candidate_evidence: 4_096,
         },
         resource_limits: ResourceLimits {
             max_request_bytes: MAX_REQUEST_BYTES,

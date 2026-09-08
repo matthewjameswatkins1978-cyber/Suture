@@ -1,38 +1,42 @@
 ---
 name: threadmoth
-description: Use Threadmoth when an AI coding task needs a precise, bounded mutation of an existing JSON, JSONC, TOML, YAML, Markdown, dotenv, pattern, source-code, patch, or text file; preserve unrelated bytes; target a named section or syntax node; handle repeated or ambiguous matches; guard stale files; enforce effect budgets; or produce a machine-readable certificate. Prefer it when an unconstrained replacement could cause collateral edits. Do not use it for read-only inspection, Git, builds, tests, formatting-only rewrites, creating new files, or unsupported file shapes.
+description: Use Threadmoth when an AI coding task needs a precise, bounded mutation of JSON, JSONC, TOML, YAML, Markdown, dotenv, pattern, source-code, patch, or text files; guarded file lifecycle operations such as create/delete/rename/move; preservation of unrelated bytes; a named section or syntax node; repeated or ambiguous match handling; stale-file guards; effect budgets; or a machine-readable certificate. Prefer it when an unconstrained write could cause collateral edits. Do not use it for read-only inspection, Git, builds, tests, formatting-only rewrites, bulk generation, or unsupported file shapes.
 license: MIT
 compatibility: >-
   Requires the Threadmoth executable on PATH (canonical command: threadmoth).
   Works with any agent that can read files and run local commands.
 metadata:
   author: matthewjameswatkins1978-cyber
-  version: "1.7.1"
+  version: "1.8.0"
 ---
 
 # Threadmoth
 
-Threadmoth is a narrow mutation boundary for existing files. It observes the
-file, identifies the intended target, guards the request, stages the candidate,
-verifies the committed bytes, and returns a certificate. It is not a general
-shell, formatter, compiler, test runner, Git client, or network tool.
+Threadmoth is a narrow mutation boundary for workspace files. It observes the
+file or guarded lifecycle target, identifies the intended effect, guards the
+request, prepares an exact candidate, verifies prospective and committed state,
+and returns a certificate. It is not a general shell, formatter, compiler, test
+runner, Git client, or network tool. The explicit `threadmoth update`
+maintenance command is a separate CLI-only exception.
 
 ## Decide whether to use it
 
-Use Threadmoth when the task changes an existing supported file and the exact
+Use Threadmoth when the task changes an existing supported file, or performs a
+guarded create/delete/rename/move operation on a workspace path, and the exact
 scope matters. It is especially useful when:
 
 - a named section, JSON path, syntax node, or exact text occurrence is the target;
+- a file lifecycle operation must be confined and explicitly guarded;
 - repeated matches must be refused instead of guessed;
 - an expected pre-image, path boundary, or effect budget should be enforced;
 - the caller needs proof of the observed and committed bytes; or
 - preserving encoding, line endings, comments, and unrelated bytes matters.
 
 Do not route a task through Threadmoth merely because it can write a file. Use
-the specialist tool when the task is formatting, compilation, testing, Git,
-bulk generation, or a new file. If the file shape or requested operation is not
-covered by its discovered capabilities, say so and use an appropriate fallback
-only when the user authorizes it or the task plainly requires it.
+the specialist tool when the task is formatting, compilation, testing, Git, or
+bulk generation. If the file shape or requested operation is not covered by its
+discovered capabilities, say so and use an appropriate fallback only when the
+user authorizes it or the task plainly requires it.
 
 ## Discover locally
 
@@ -87,6 +91,18 @@ obvious, preview first:
 threadmoth preview --request request.json
 threadmoth mutate --request request.json
 ```
+
+For a reviewable prepare/commit handoff:
+
+```text
+threadmoth plan --request request.json --output plan.json
+threadmoth explain --plan plan.json
+threadmoth apply-plan --plan plan.json
+```
+
+Plans are untrusted and staleable. Applying one rechecks hashes, containment,
+exact edits, budgets, candidate guards, and bounded assertions. Never try to
+repair a stale plan by fuzzy relocation; prepare a new plan.
 
 The default output is JSON. `--summary` is for a compact human view; keep the
 full JSON certificate for agent state, audit, and follow-up decisions. A

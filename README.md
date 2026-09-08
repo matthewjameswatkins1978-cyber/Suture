@@ -14,14 +14,14 @@ Threadmoth is a small Rust runtime for **safe, source-preserving file mutation**
 
 > The parser gets to point at the cloth. It doesn’t get to re-weave it.
 
-Threadmoth 1.7 is an agent-usability release over the shared syntax engine and language-neutral desired-state planner. Providers and planners propose `Vec<ByteEdit>`; Core alone guards, applies, verifies, and certifies them.
+Threadmoth 1.8 makes guarded mutations portable and provable. Agents can prepare deterministic plans, apply them only against the exact state they were built for, declare bounded postconditions, and explicitly update standalone installations. Providers and planners still propose `Vec<ByteEdit>`; Core alone guards, applies, verifies, and certifies them.
 
 It can target text, structured data, configuration files, Markdown, dotenv files, regex patterns, syntax-aware code operations, strict patches, and guarded file lifecycle operations while preserving unrelated bytes. Every successful mutation is checked, committed through one controlled core, and returned with evidence describing what was observed and what actually changed.
 
 The execution pipeline is deliberately boring in the best possible way:
 
 ```text
-OBSERVE -> IDENTIFY -> GUARD -> MUTATE -> VERIFY -> CERTIFY
+OBSERVE -> IDENTIFY -> GUARD -> PLAN -> VERIFY PROSPECTIVE -> MUTATE -> VERIFY COMMITTED -> CERTIFY
 ```
 
 If reality is ambiguous, stale, unsafe, or outside the requested bounds, Threadmoth refuses instead of guessing.
@@ -39,7 +39,7 @@ Threadmoth turns that final step into a narrow deterministic operation with expl
 - **Structural**: understands more than raw string replacement.
 - **Source-preserving**: unrelated bytes stay untouched.
 - **Refusal-first**: ambiguity is surfaced, not silently “resolved.”
-- **Agent-friendly**: JSON in, JSON out, stable exit codes, schemas, capabilities, preview, and recovery.
+- **Agent-friendly**: JSON in, JSON out, stable exit codes, schemas, capabilities, preview, plans, and recovery.
 - **Auditable**: `APPLIED` includes hashes, changed byte ranges, bounded diff evidence, and commit evidence.
 - **Contained**: workspace boundaries, traversal checks, symlink containment, staged writes, stale-read protection, and recovery state.
 
@@ -101,7 +101,7 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Threadmoth 1.7.1 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
+Threadmoth 1.8.0 gives human benchmark output a compact table while keeping `--json` stable for agents and scripts. A successful run ends with a line like:
 
 ```text
 PASS  8/8 cases · 0 wrong mutations · correctness checked
@@ -109,11 +109,21 @@ PASS  8/8 cases · 0 wrong mutations · correctness checked
 
 Torture uses the same presentation rather than a separate wall of state messages.
 
-## Install
+## Install and update
 
 Download the platform binary from a GitHub release and put `threadmoth` (or `Threadmoth.exe`) on `PATH`.
 
-The current release is [Threadmoth v1.7.1](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.7.1), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
+The current release is [Threadmoth v1.8.0](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.8.0), with verified packages for Windows x86-64, Linux x86-64, macOS Apple Silicon, and macOS x86-64. Each package includes the binary, shell completion, the man page, and a SHA-256 checksum.
+
+Standalone installations can check and explicitly update from the official GitHub Releases repository:
+
+```text
+threadmoth update --check
+threadmoth update
+threadmoth update --yes --json
+```
+
+The updater accepts stable releases only, selects the exact platform archive, verifies the release manifest SHA-256 and GitHub asset digest when available, checks the extracted executable's version, and replaces the current binary only after those checks pass. Cargo, Homebrew, and WinGet-managed installations are reported rather than overwritten. Mutation commands never access the network; only this explicit maintenance command does.
 
 Building from source requires Rust 1.85 or newer:
 
@@ -142,6 +152,16 @@ threadmoth_mutate or threadmoth_transact
 ```
 
 The MCP discovery surface is `threadmoth_inspect`, `threadmoth_suggest`, `threadmoth_explain`, and `threadmoth_capabilities`; `threadmoth_preview` and `threadmoth_transact_preview` never write. Ambiguous text and code targets can be selected only with their exact observed file hash, byte offset, and deterministic `selection_id`.
+
+For a portable, inspectable prepare/commit handoff, use the plan loop:
+
+```text
+threadmoth plan --request request.json --output plan.json
+threadmoth explain --plan plan.json
+threadmoth apply-plan --plan plan.json
+```
+
+Plans contain exact pre-image hashes, guarded provider resolutions, byte edits, effect budgets, and deterministic plan IDs. Applying one re-reads reality, refuses stale or tampered plans, checks prospective assertions, commits through the existing recovery machinery, reads the bytes back, and checks the assertions again.
 
 Minimal MCP server configuration:
 
@@ -305,7 +325,7 @@ Threadmoth currently supports:
 
 Providers propose candidates. **Core alone commits them.**
 
-`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.7.1 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
+`filesystem` is the canonical lifecycle-provider name. Threadmoth 1.8.0 still accepts the older request spelling `file` as a compatibility alias, but discovery, schemas, certificates, and newly serialized requests use `filesystem`.
 
 ## Real-world dogfood: Lantern Keeper
 
@@ -344,12 +364,17 @@ threadmoth capabilities
 threadmoth schema
 threadmoth examples
 threadmoth suggest PATH
-  threadmoth preview --request request.json
+threadmoth inspect PATH
+threadmoth preview --request request.json
+threadmoth plan --request request.json --output plan.json
+threadmoth explain --plan plan.json
+threadmoth apply-plan --plan plan.json
 threadmoth mutate --request request.json
 threadmoth recover
 threadmoth recover --list
 threadmoth recover --inspect TRANSACTION_ID
 threadmoth recover --transaction TRANSACTION_ID
+threadmoth update --check
 threadmoth benchmark
 threadmoth benchmark --tough
 threadmoth benchmark --torture
@@ -369,7 +394,7 @@ Exit codes are:
 
 This makes Threadmoth easy to drop into agent loops, scripts, orchestration systems, and toolbelts without scraping prose.
 
-  ### Portable agent integrations
+### Portable agent integrations
 
 Threadmoth also ships a portable [Agent Skill](skills/threadmoth/SKILL.md) for
 agents that support the open `SKILL.md` format. The same skill is bundled as a
@@ -383,11 +408,11 @@ Antigravity also has a native [`plugin.json`](plugin.json) manifest and reuses t
 
 ## Safety model
 
-Threadmoth is intentionally narrow. It mutates files. It does **not** execute Git, builds, tests, formatters, arbitrary subprocesses, or network operations.
+Threadmoth is intentionally narrow. Mutation operations do not execute Git, builds, tests, formatters, arbitrary subprocesses, or network operations. The explicit `threadmoth update` maintenance command is the one documented exception and contacts only the official release repository.
 
 The workspace layer confines paths, rejects traversal and escaping symlinks, stages writes in the destination directory, flushes before replacement, rechecks the observed hash immediately before commit, and reads the committed bytes back before certification.
 
-The v1.2 protocol supports UTF-8, UTF-8 BOM, LF, CRLF, and either final-newline state. Unknown legacy encodings are refused. Requests may declare hard effect budgets. Multi-file transactions stage candidates in memory, journal before commit, roll back on failure where possible, and expose recovery state. Ambiguous text and code targets return deterministic `selection_id` values; a caller may select one only with the exact observed `expected_pre_hash` and `candidate_guard`.
+Protocol 1.3 supports UTF-8, UTF-8 BOM, LF, CRLF, and either final-newline state; protocol 1.1 and 1.2 requests remain accepted with their promised semantics. Unknown legacy encodings are refused. Requests may declare hard effect budgets. Multi-file transactions stage candidates in memory, journal before commit, roll back on failure where possible, and expose recovery state. Ambiguous text and code targets return deterministic `selection_id` values; a caller may select one only with the exact observed `expected_pre_hash` and `candidate_guard`.
 
 ## Documentation
 

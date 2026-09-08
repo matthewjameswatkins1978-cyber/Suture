@@ -1,8 +1,30 @@
 # Threadmoth CLI
 
-Threadmoth 1.7.1 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
+Threadmoth 1.8.0 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
 
-The MCP stdio server exposes read-only `threadmoth_inspect`, `threadmoth_suggest`, and `threadmoth_explain` alongside `threadmoth_capabilities`, `threadmoth_preview`, `threadmoth_transact_preview`, mutation, and transaction tools. Preview runs the same guarded planning and certification pipeline as mutation with commit disabled. JSON-RPC notifications, including `notifications/initialized`, are consumed without a response; ordinary requests receive a JSON-RPC result or standard error response.
+The MCP stdio server exposes read-only `threadmoth_inspect`, `threadmoth_suggest`, and `threadmoth_explain` alongside `threadmoth_capabilities`, `threadmoth_preview`, `threadmoth_plan`, `threadmoth_apply_plan`, `threadmoth_transact_preview`, mutation, and transaction tools. Preview runs the same guarded planning and certification pipeline as mutation with commit disabled. Self-update remains CLI-only. JSON-RPC notifications, including `notifications/initialized`, are consumed without a response; ordinary requests receive a JSON-RPC result or standard error response.
+
+## Plans, assertions, and updates
+
+Prepare without writing, inspect the deterministic artifact, then apply it only if the workspace still matches:
+
+```text
+threadmoth plan --request request.json --output plan.json --summary
+threadmoth explain --plan plan.json
+threadmoth apply-plan --plan plan.json --summary
+```
+
+Plan input may include a top-level `assertions` array containing `file_exists`, `file_absent`, `sha256`, or bounded `literal_count` assertions. Assertions run against the prospective in-memory state before writes and against bytes read back after commit. A stale or tampered plan returns `PLAN_STALE`/`PLAN_INVALID` and writes nothing.
+
+The updater is an explicit maintenance operation:
+
+```text
+threadmoth update --check
+threadmoth update
+threadmoth update --yes --json
+```
+
+It has no arbitrary URL/source flags and is not exposed through MCP. `threadmoth doctor` reports local installation provenance without performing a network check.
 
 ## Benchmark commands
 
@@ -79,7 +101,7 @@ The summary shows the outcome, provider, effect size, budget result, newline/pre
 }
 ```
 
-Threadmoth 1.7.1 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
+Threadmoth 1.8.0 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
 
 ## Shell completion
 
@@ -181,4 +203,4 @@ threadmoth doctor
 
 ## Compatibility policy
 
-Threadmoth 1.7.1 keeps the important pre-1.3 spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. It also accepts protocol 1.1 requests while advertising protocol 1.2 as current.
+Threadmoth 1.8.0 keeps the important pre-1.3 command and provider spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. It accepts protocol 1.1 and 1.2 requests with their promised semantics while advertising protocol 1.3 as current.

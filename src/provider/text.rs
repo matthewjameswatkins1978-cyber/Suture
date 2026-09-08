@@ -285,6 +285,8 @@ fn enforce_cardinality(
             target: String::from_utf8_lossy(target).into_owned(),
             count: actual,
             candidates: candidate_diagnostics(content, target, matches),
+            candidates_returned: actual.min(8),
+            truncated: actual > 8,
         })
     };
 
@@ -500,13 +502,21 @@ mod tests {
             replacement: "bar".to_string(),
         };
         let res = TextProvider::plan(content, &op, &Cardinality::ExactlyOne);
-        assert!(matches!(
-            res,
+        match res {
             Err(TextProviderError::Refused(RefusalReason::DuplicateTarget {
-                count: 3,
+                count,
+                candidates,
+                candidates_returned,
+                truncated,
                 ..
-            }))
-        ));
+            })) => {
+                assert_eq!(count, 3);
+                assert_eq!(candidates.len(), 3);
+                assert_eq!(candidates_returned, 3);
+                assert!(!truncated);
+            }
+            other => panic!("expected bounded ambiguity, got {other:?}"),
+        }
     }
 
     #[test]

@@ -78,6 +78,8 @@ fn tools_list_exposes_preview_and_notification_has_no_response() {
         "threadmoth_suggest",
         "threadmoth_explain",
         "threadmoth_transact_preview",
+        "threadmoth_plan",
+        "threadmoth_apply_plan",
     ] {
         assert!(output[0]["result"]["tools"]
             .as_array()
@@ -85,6 +87,42 @@ fn tools_list_exposes_preview_and_notification_has_no_response() {
             .iter()
             .any(|tool| tool["name"] == tool_name));
     }
+    assert!(!output[0]["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == "threadmoth_update"));
+}
+
+#[test]
+fn plan_and_apply_plan_are_guarded_and_assertions_are_checked() {
+    let workspace = TempDir::new().unwrap();
+    fs::write(workspace.path().join("x.txt"), b"old\n").unwrap();
+    let mut request = replace_request("x.txt");
+    request["assertions"] =
+        json!([{"type":"literal_count","path":"x.txt","literal":"new","exactly":1}]);
+    let plan_output = call_mcp(
+        &workspace,
+        &[json!({
+            "jsonrpc":"2.0","id":1,"method":"tools/call",
+            "params":{"name":"threadmoth_plan","arguments":request}
+        })],
+    );
+    let plan = plan_output[0]["result"]["structuredContent"].clone();
+    assert!(plan["plan_id"].as_str().unwrap().starts_with("sha256:"));
+    assert_eq!(fs::read(workspace.path().join("x.txt")).unwrap(), b"old\n");
+    let apply_output = call_mcp(
+        &workspace,
+        &[json!({
+            "jsonrpc":"2.0","id":2,"method":"tools/call",
+            "params":{"name":"threadmoth_apply_plan","arguments":plan}
+        })],
+    );
+    assert_eq!(
+        apply_output[0]["result"]["structuredContent"]["outcome"],
+        "APPLIED"
+    );
+    assert_eq!(fs::read(workspace.path().join("x.txt")).unwrap(), b"new\n");
 }
 
 #[test]
