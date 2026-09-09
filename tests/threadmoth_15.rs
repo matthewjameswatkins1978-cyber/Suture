@@ -9,6 +9,7 @@ use threadmoth::{
         DesiredStateOperation, EffectBudget, OperationPayload, Outcome, Request,
         TransactionRequest, PROTOCOL_VERSION,
     },
+    provider::ini::IniOperation,
     provider::web::WebOperation,
     recovery::{self, Journal, JournalEntry},
     workspace::Workspace,
@@ -109,10 +110,45 @@ fn registry_drives_capabilities_and_suggestions() {
     let capabilities = metadata::capabilities();
     assert!(capabilities.code_languages.contains(&"cpp"));
     assert!(capabilities.code_languages.contains(&"powershell"));
+    assert!(capabilities.code_languages.contains(&"java"));
+    assert!(capabilities
+        .providers
+        .iter()
+        .any(|provider| provider.name == "ini"));
     assert_eq!(capabilities.web_formats, vec!["html", "css", "xml"]);
     let suggestion = metadata::suggest("script.ps1", None, None, "safe", None);
     assert_eq!(suggestion.provider, "code");
     assert_eq!(suggestion.language.as_deref(), Some("powershell"));
+    assert_eq!(metadata::detect_provider("config.ini", None).0, "ini");
+    assert_eq!(
+        metadata::detect_provider("blob", Some(&[0, 1, 2])).0,
+        "opaque"
+    );
+}
+
+#[test]
+fn ini_operation_uses_the_guarded_core_pipeline() {
+    let temp = TempDir::new().unwrap();
+    let workspace = Workspace::new(temp.path()).unwrap();
+    workspace
+        .write_file_atomic("setup.ini", b"[server]\r\nport = 8080\r\n")
+        .unwrap();
+    let certificate = execute_request(
+        &workspace,
+        &request(
+            "setup.ini",
+            OperationPayload::Ini(IniOperation::Set {
+                path: "server.port".into(),
+                value: "9090".into(),
+            }),
+        ),
+        false,
+    );
+    assert_eq!(certificate.outcome, Outcome::Applied);
+    assert_eq!(
+        fs::read(temp.path().join("setup.ini")).unwrap(),
+        b"[server]\r\nport = 9090\r\n"
+    );
 }
 
 #[test]

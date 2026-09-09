@@ -4,9 +4,16 @@ Threadmoth is a fast, deterministic structural search-and-rewrite runtime for AI
 
 ## Start here
 
+Coverage and build choices: [coverage model](coverage.md), [target registry](target-registry.md), and [performance builds](performance-builds.md).
+
+Measured local results are recorded in [performance evidence](performance-results.md).
+
+Coverage and build choices: [coverage model](coverage.md),
+[target registry](target-registry.md), and [performance builds](performance-builds.md).
+
 | Document | Purpose |
 |---|---|
-| [CLI guide](cli.md) | Threadmoth 1.8.1 commands, plans, assertions, updater, safe shorthands, desired-state mode, recovery inspection, completion, help and manpage generation |
+| [CLI guide](cli.md) | Threadmoth 1.9.0 commands, coverage discovery, plans, assertions, updater, safe shorthands, desired-state mode, recovery inspection, completion, help and manpage generation |
 | [Agent integration](agent-integration.md) | Minimal instructions and safe usage flow for coding agents and MCP clients |
 | [Architecture](architecture.md) | How Threadmoth separates observation, identification, mutation, verification, and commit |
 | [Protocol](protocol.md) | Request/response contract and machine-facing behaviour |
@@ -59,7 +66,7 @@ threadmoth manpage
 threadmoth mcp
 ```
 
-See the [CLI guide](cli.md) for the Threadmoth 1.8.1 command surface and [Agent integration](agent-integration.md) for the intended discovery → plan/preview → refusal recovery → commit loop.
+See the [CLI guide](cli.md) for the Threadmoth 1.9.0 command surface and [Agent integration](agent-integration.md) for the intended discovery → plan/preview → refusal recovery → commit loop.
 
 For machine integration, mutation output is JSON on stdout, diagnostics are on stderr, and stable exit codes distinguish success/no-change, refusal, and runtime failure.
 

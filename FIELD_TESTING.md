@@ -1,6 +1,6 @@
 # Break the moth
 
-## Threadmoth 1.8.1 recovery focus
+## Threadmoth 1.9.0 coverage and recovery focus
 
 Field testing should record whether an agent stayed inside the Threadmoth
 workflow after `REFUSED`: did it consume the certificate remedy, construct the

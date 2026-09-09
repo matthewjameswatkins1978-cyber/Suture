@@ -127,6 +127,38 @@ pub fn registry() -> &'static [LanguageSpec] {
             grammar: || tree_sitter_cpp::LANGUAGE.into(),
         },
         LanguageSpec {
+            id: "java",
+            aliases: &[],
+            extensions: &[".java"],
+            family: LanguageFamily::Code,
+            description: "Java source",
+            grammar: || tree_sitter_java::LANGUAGE.into(),
+        },
+        LanguageSpec {
+            id: "csharp",
+            aliases: &["cs", "c#"],
+            extensions: &[".cs"],
+            family: LanguageFamily::Code,
+            description: "C# source",
+            grammar: || tree_sitter_c_sharp::LANGUAGE.into(),
+        },
+        LanguageSpec {
+            id: "php",
+            aliases: &[],
+            extensions: &[".php"],
+            family: LanguageFamily::Code,
+            description: "PHP source and embedded PHP",
+            grammar: || tree_sitter_php::LANGUAGE_PHP.into(),
+        },
+        LanguageSpec {
+            id: "hcl",
+            aliases: &["terraform", "tf"],
+            extensions: &[".tf", ".tfvars", ".hcl"],
+            family: LanguageFamily::Code,
+            description: "HCL and Terraform syntax without infrastructure semantics",
+            grammar: || tree_sitter_hcl::LANGUAGE.into(),
+        },
+        LanguageSpec {
             id: "bash",
             aliases: &["sh", "shell"],
             extensions: &[".sh", ".bash"],
@@ -586,8 +618,53 @@ mod tests {
     fn extension_suggestions_are_unambiguous() {
         assert_eq!(suggest_extension("foo.cpp"), Some("cpp"));
         assert_eq!(suggest_extension("foo.ps1"), Some("powershell"));
+        assert_eq!(suggest_extension("Example.java"), Some("java"));
+        assert_eq!(suggest_extension("Example.cs"), Some("csharp"));
+        assert_eq!(suggest_extension("index.php"), Some("php"));
+        assert_eq!(suggest_extension("main.tf"), Some("hcl"));
         assert_eq!(suggest_extension("index.html"), Some("html"));
         assert_eq!(suggest_extension("unknown"), None);
+    }
+
+    #[test]
+    fn admitted_language_grammars_parse_representative_source() {
+        let cases = [
+            ("java", b"class Example { int value; }".as_slice()),
+            (
+                "csharp",
+                b"class Example { public int Value { get; set; } }".as_slice(),
+            ),
+            (
+                "php",
+                b"<?php function value(): int { return 1; }".as_slice(),
+            ),
+            ("php", b"<html><?php echo \"ok\"; ?></html>".as_slice()),
+            (
+                "hcl",
+                b"resource \"example\" \"one\" { value = \"ok\" }".as_slice(),
+            ),
+        ];
+        for (language, source) in cases {
+            validate(source, language).unwrap_or_else(|error| {
+                panic!("{language} admission source must parse: {error:?}")
+            });
+        }
+    }
+
+    #[test]
+    fn admitted_language_grammars_refuse_malformed_source() {
+        for (language, source) in [
+            ("java", b"class {".as_slice()),
+            ("csharp", b"class {".as_slice()),
+            ("php", b"<?php function {".as_slice()),
+            ("hcl", b"resource {".as_slice()),
+        ] {
+            let error = validate(source, language).unwrap_err();
+            assert!(matches!(
+                error,
+                SyntaxError::Refused(RefusalReason::MalformedInput { .. })
+            ));
+        }
     }
 
     #[test]

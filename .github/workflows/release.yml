@@ -30,39 +30,77 @@ jobs:
             artifact: threadmoth-linux-x86_64
             target: x86_64-unknown-linux-gnu
             binary: threadmoth
+            profile: release
+            rustflags: ''
+            flavor: portable
+            cpu_baseline: default
           - os: windows-latest
             artifact: threadmoth-windows-x86_64
             target: x86_64-pc-windows-msvc
             binary: threadmoth.exe
+            profile: release
+            rustflags: ''
+            flavor: portable
+            cpu_baseline: default
           - os: macos-14
             artifact: threadmoth-macos-aarch64
             target: aarch64-apple-darwin
             binary: threadmoth
+            profile: release
+            rustflags: ''
+            flavor: portable
+            cpu_baseline: apple-m1/default-target
           - os: macos-15-intel
             artifact: threadmoth-macos-x86_64
             target: x86_64-apple-darwin
             binary: threadmoth
+            profile: release
+            rustflags: ''
+            flavor: portable
+            cpu_baseline: default
+          - os: ubuntu-latest
+            artifact: threadmoth-linux-x86_64-v3
+            target: x86_64-unknown-linux-gnu
+            binary: threadmoth
+            profile: maxperf
+            rustflags: '-C target-cpu=x86-64-v3'
+            flavor: modern
+            cpu_baseline: x86-64-v3
+          - os: windows-latest
+            artifact: threadmoth-windows-x86_64-v3
+            target: x86_64-pc-windows-msvc
+            binary: threadmoth.exe
+            profile: maxperf
+            rustflags: '-C target-cpu=x86-64-v3'
+            flavor: modern
+            cpu_baseline: x86-64-v3
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      THREADMOTH_BUILD_FLAVOR: ${{ matrix.flavor }}
+      THREADMOTH_CPU_BASELINE: ${{ matrix.cpu_baseline }}
+      THREADMOTH_PGO_USED: false
+      THREADMOTH_OPTIMIZATION_PROFILE: ${{ matrix.profile }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - run: cargo build --locked --release --target ${{ matrix.target }}
-      - run: cargo run --locked --release --target ${{ matrix.target }} -- benchmark --quick --json
-      - run: cargo run --locked --release --target ${{ matrix.target }} -- benchmark --torture --json
-      - run: cargo run --locked --release --target ${{ matrix.target }} -- --version
-      - run: cargo run --locked --release --target ${{ matrix.target }} -- doctor
+      - run: cargo build --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
+      - run: cargo run --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }} -- benchmark --quick --json
+      - run: cargo run --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }} -- benchmark --torture --json
+      - run: cargo run --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }} -- --version
+      - run: cargo run --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }} -- doctor
       - name: Package Unix
         if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p package/completions
-          cp target/${{ matrix.target }}/release/${{ matrix.binary }} package/${{ matrix.binary }}
-          target/${{ matrix.target }}/release/${{ matrix.binary }} completions bash > package/completions/threadmoth.bash
-          target/${{ matrix.target }}/release/${{ matrix.binary }} completions zsh > package/completions/_threadmoth
-          target/${{ matrix.target }}/release/${{ matrix.binary }} completions fish > package/completions/threadmoth.fish
-          target/${{ matrix.target }}/release/${{ matrix.binary }} manpage --output package/threadmoth.1
+          cp target/${{ matrix.target }}/${{ matrix.profile }}/${{ matrix.binary }} package/${{ matrix.binary }}
+          target/${{ matrix.target }}/${{ matrix.profile }}/${{ matrix.binary }} completions bash > package/completions/threadmoth.bash
+          target/${{ matrix.target }}/${{ matrix.profile }}/${{ matrix.binary }} completions zsh > package/completions/_threadmoth
+          target/${{ matrix.target }}/${{ matrix.profile }}/${{ matrix.binary }} completions fish > package/completions/threadmoth.fish
+          target/${{ matrix.target }}/${{ matrix.profile }}/${{ matrix.binary }} manpage --output package/threadmoth.1
           test -s package/${{ matrix.binary }}
           expected="threadmoth ${GITHUB_REF_NAME#v}"
           test "$(package/${{ matrix.binary }} --version)" = "$expected"
@@ -73,12 +111,12 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
           New-Item -ItemType Directory -Force package/completions | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/threadmoth.exe package/threadmoth.exe
-          target/${{ matrix.target }}/release/threadmoth.exe completions powershell | Out-File -Encoding utf8 package/completions/threadmoth.ps1
-          target/${{ matrix.target }}/release/threadmoth.exe manpage --output package/threadmoth.1
+          Copy-Item target/${{ matrix.target }}/${{ matrix.profile }}/threadmoth.exe package/threadmoth.exe
+          target/${{ matrix.target }}/${{ matrix.profile }}/threadmoth.exe completions powershell | Out-File -Encoding utf8 package/completions/threadmoth.ps1
+          target/${{ matrix.target }}/${{ matrix.profile }}/threadmoth.exe manpage --output package/threadmoth.1
           if ((Get-Item package/threadmoth.exe).Length -le 0) { throw 'packaged binary is empty' }
           $expected = 'threadmoth ' + $env:GITHUB_REF_NAME.TrimStart('v')
-          if ((target/${{ matrix.target }}/release/threadmoth.exe --version) -ne $expected) { throw "packaged version mismatch: expected $expected" }
+          if ((target/${{ matrix.target }}/${{ matrix.profile }}/threadmoth.exe --version) -ne $expected) { throw "packaged version mismatch: expected $expected" }
           Compress-Archive -Path package/* -DestinationPath "${{ matrix.artifact }}.zip"
       - name: Checksums Unix
         if: runner.os != 'Windows'

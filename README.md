@@ -380,7 +380,7 @@ It does one job:
 
 ## Install
 
-Download the appropriate standalone binary from the **[Threadmoth v1.8.1 release](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.8.1)** and put `threadmoth` on your `PATH`.
+Download the appropriate standalone binary from the **[Threadmoth v1.9.0 release](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.9.0)** and put `threadmoth` on your `PATH`.
 
 Check the installation:
 
@@ -397,11 +397,17 @@ threadmoth update --check
 threadmoth update
 ```
 
-The v1.8.1 release includes Windows x86-64, Linux x86-64, macOS Apple
+The v1.9.0 release includes Windows x86-64, Linux x86-64, macOS Apple
 Silicon, and macOS x86-64 archives, each with shell completions, a man page,
 SHA-256 checksums, and a release manifest. Standalone self-update verifies
 the selected archive and executable version before replacing the current
 binary; package-managed installations are reported rather than overwritten.
+
+Portable archives are the compatibility default. Windows and Linux also have
+explicit `-v3` modern archives built with the x86-64-v3 baseline; use them only
+when the machine supports that baseline. Local `target-cpu=native` builds are
+available from the build scripts and are never treated as downloadable
+portable releases.
 
 For common safe edits, these small commands compile into the same guarded Core
 pipeline as canonical requests:
@@ -417,6 +423,15 @@ Shorthands authorize one file, one target, and one changed region. They refuse
 ambiguity and stale state. When a refusal includes deterministic `recovery`
 remedies, `threadmoth suggest --from-refusal refusal.json` emits complete
 guarded next-request templates; the caller still chooses among candidates.
+
+Before choosing an edit route, agents can inspect Threadmoth's coverage model
+with `threadmoth capabilities --for PATH --json` or `threadmoth inspect PATH
+--json`. Files are classified as structured (JSON, JSONC, TOML, YAML, INI and
+dotenv), syntax-aware (including Java, C#, PHP and HCL), bounded regions
+(Markdown), exact text, or opaque/refused. JSX and TSX are syntax variants,
+not separate language claims. Unknown valid UTF-8 remains available through
+explicit exact mutation; binary and unsupported encodings do not silently
+fall back. See [the coverage guide](docs/coverage.md).
 
 The current protocol is 1.3.1 and remains compatible with 1.3.0, 1.2.0, and
 1.1.0 requests. Mutation, plan application, transaction, filesystem lifecycle,

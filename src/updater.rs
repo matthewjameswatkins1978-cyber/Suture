@@ -177,19 +177,37 @@ impl UpdateInfo {
 
 #[allow(unreachable_code)]
 pub fn platform() -> Result<Platform, UpdateError> {
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let modern = crate::build_info::current().build_flavor == "modern";
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
         return Ok(Platform {
-            name: "windows-x86_64",
-            archive: "threadmoth-windows-x86_64.zip",
+            name: if modern {
+                "windows-x86_64-v3"
+            } else {
+                "windows-x86_64"
+            },
+            archive: if modern {
+                "threadmoth-windows-x86_64-v3.zip"
+            } else {
+                "threadmoth-windows-x86_64.zip"
+            },
             executable: "threadmoth.exe",
         });
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         return Ok(Platform {
-            name: "linux-x86_64",
-            archive: "threadmoth-linux-x86_64.tar.gz",
+            name: if modern {
+                "linux-x86_64-v3"
+            } else {
+                "linux-x86_64"
+            },
+            archive: if modern {
+                "threadmoth-linux-x86_64-v3.tar.gz"
+            } else {
+                "threadmoth-linux-x86_64.tar.gz"
+            },
             executable: "threadmoth",
         });
     }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.0 - Coverage and performance foundations
+
+Threadmoth 1.9.0 adds a canonical coverage registry, Java/C#/PHP/HCL syntax
+grammar admission, source-preserving nested YAML targeting, conservative INI
+targeting, structured discovery metadata, and explicit portable/modern/native
+build tooling. Advanced YAML constructs remain fail-closed and PGO remains an
+experiment until measured evidence justifies release adoption.
+
 ## 1.8.1 - Completion and hardening
 
 Threadmoth 1.8.1 hardens the 1.8 agent workflow without expanding semantic authorship. It adds actionable refusal recovery, bounded cross-process mutation locking, strict structured schema diagnostics, safe shorthand entry points, structured doctor output, and adversarial plan/filesystem coverage.
