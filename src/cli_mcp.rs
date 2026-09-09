@@ -85,58 +85,10 @@ fn shorthand_request(file: &str, operation: OperationPayload, bytes: usize) -> R
             max_matches: Some(1),
             max_changed_regions: Some(1),
             max_changed_lines: None,
-            max_changed_bytes: Some(bytes.max(1)),
+            max_changed_bytes: Some(bytes.saturating_add(64).max(1)),
             allowed_path_prefixes: Vec::new(),
         },
         operation,
-    }
-}
-
-fn set_value_operation(file: &str, path: &str, value: Value) -> Result<OperationPayload, String> {
-    let extension = std::path::Path::new(file)
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    match extension.as_str() {
-        "json" => Ok(OperationPayload::Json(
-            threadmoth::provider::json::JsonOperation::Set {
-                path: path.into(),
-                value,
-            },
-        )),
-        "jsonc" => Ok(OperationPayload::Jsonc(
-            threadmoth::provider::json::JsonOperation::Set {
-                path: path.into(),
-                value,
-            },
-        )),
-        "yaml" | "yml" => Ok(OperationPayload::Yaml(
-            threadmoth::provider::yaml::YamlOperation::Set {
-                path: path.into(),
-                value,
-            },
-        )),
-        "toml" => {
-            let value = serde_json::from_value(value)
-                .map_err(|error| format!("TOML value is not representable: {error}"))?;
-            Ok(OperationPayload::Toml(
-                threadmoth::provider::toml::TomlOperation::Set {
-                    path: path.into(),
-                    value,
-                },
-            ))
-        }
-        "ini" => match value {
-            Value::String(value) => Ok(OperationPayload::Ini(
-                threadmoth::provider::ini::IniOperation::Set {
-                    path: path.into(),
-                    value,
-                },
-            )),
-            _ => Err("INI values must be JSON strings".into()),
-        },
-        _ => Err("set-value supports .json, .jsonc, .toml, .yaml, .yml, and .ini files".into()),
     }
 }
 
@@ -230,7 +182,7 @@ fn handle_mcp_message(workspace: &Workspace, request: Value) -> Option<Value> {
                     {"name": "threadmoth_transact_preview", "description": "Preview a guarded transaction without writing", "inputSchema": schema_for!(TransactionRequest)},
                     {"name": "threadmoth_transact", "description": "Prepare and commit a guarded transaction", "inputSchema": schema_for!(TransactionRequest)},
                     {"name": "threadmoth_exact_replace", "description": "Safely replace one exact text occurrence through the canonical pipeline", "inputSchema": schema_for!(ExactReplaceToolArgs)},
-                    {"name": "threadmoth_set_value", "description": "Safely set one JSON, JSONC, TOML, or YAML value through the canonical pipeline", "inputSchema": schema_for!(SetValueToolArgs)}
+                    {"name": "threadmoth_set_value", "description": "Safely set one JSON, JSONC, TOML, YAML, INI or dotenv value through the canonical registry and Core pipeline", "inputSchema": schema_for!(SetValueToolArgs)}
                 ]}
             }),
             Some("tools/call") => {
@@ -304,7 +256,8 @@ fn call_tool(workspace: &Workspace, name: &str, arguments: Value) -> Result<Valu
             let bytes = serde_json::to_vec(&args.value)
                 .map_err(|error| error.to_string())?
                 .len();
-            let operation = set_value_operation(&args.file, &args.path, args.value)?;
+            let operation =
+                threadmoth::shorthand::set_value_operation(&args.file, &args.path, args.value)?;
             let request = shorthand_request(&args.file, operation, bytes);
             serde_json::to_value(execute_request(workspace, &request, false))
                 .map_err(|error| error.to_string())

@@ -253,14 +253,9 @@ pub fn lookup(name: &str) -> Option<&'static LanguageSpec> {
 }
 
 pub fn suggest_extension(path: &str) -> Option<&'static str> {
-    let lower = path.to_ascii_lowercase();
-    let extension = registry()
-        .iter()
-        .flat_map(|spec| spec.extensions.iter().map(move |ext| (ext, spec)))
-        .filter(|(ext, _)| lower.ends_with(**ext))
-        .collect::<Vec<_>>();
-    if extension.len() == 1 {
-        Some(extension[0].1.id)
+    let detection = crate::target_registry::detect(path, None);
+    if matches!(detection.provider.as_deref(), Some("code" | "web")) {
+        crate::target_registry::lookup(&detection.target_kind).map(|spec| spec.id)
     } else {
         None
     }

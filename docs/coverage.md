@@ -1,6 +1,10 @@
 # Coverage model
 
-Threadmoth 1.9 classifies a discovered file before mutation. The level is an honest description of what the selected provider can prove, not a promise to understand an entire ecosystem or rewrite a whole file.
+Threadmoth 1.9.1 classifies a discovered file before mutation. The Target
+Registry is the single classification authority used by discovery, inspect,
+capabilities, suggest, CLI shorthands and MCP shorthands. The level is an
+honest description of what the selected provider can prove, not a promise to
+understand an entire ecosystem or rewrite a whole file.
 
 | Level | Meaning | Current examples |
 | --- | --- | --- |
@@ -32,13 +36,20 @@ Anchors, aliases, explicit tags, merge keys and directives remain outside the lo
 
 ### INI-style configuration
 
-The INI provider understands source-level sections and keys for `.ini` files and registered INI-style filenames such as `setup.cfg`, `tox.ini`, `pytest.ini` and `.editorconfig`. It preserves comments, ordering and surrounding layout where the local operation permits.
+The INI provider understands source-level sections and keys for `.ini` files
+and registered INI-style filenames such as `setup.cfg`, `tox.ini`, `pytest.ini`
+and `.editorconfig`. It preserves comments, ordering and surrounding layout
+where the local operation permits. Registry recognition does not imply that
+every operation is valid for every target; unsupported operations refuse.
 
 Threadmoth does not pretend every INI dialect has identical runtime semantics. It targets source structure only.
 
 ### dotenv
 
-The dotenv provider remains a narrow key/value editor for `.env` filename families and explicit `.env` extensions, preserving unrelated lines and comments.
+The dotenv provider remains a narrow key/value editor for `.env` filename
+families and explicit `.env` extensions, preserving unrelated lines and
+comments. The value shorthand reaches it through the same registry resolver as
+INI and other structured providers.
 
 ## Syntax-aware source
 

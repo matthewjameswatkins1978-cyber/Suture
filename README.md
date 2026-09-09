@@ -187,7 +187,7 @@ No fuzzy relocation. No automatic repair. No guessing.
 | **JSON / JSONC** | Source-preserving structural value edits |
 | **TOML** | Structure-aware dotted-key edits |
 | **YAML** | Conservative nested map/sequence scalar edits with source-local preservation |
-| **INI** | Source-preserving section/key edits for INI-style configuration |
+| **INI** | Source-preserving section/key edits for `.ini`, `setup.cfg`, `tox.ini`, `pytest.ini` and `.editorconfig` |
 | **Markdown** | Heading/list/fenced-region bounded changes |
 | **dotenv** | Key edits while preserving comments and surrounding lines |
 | **Pattern** | Bounded regex operations |
@@ -377,7 +377,7 @@ It does one job:
 
 Download the appropriate standalone binary from the **[latest GitHub release](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/latest)** and put `threadmoth` on your `PATH`.
 
-The repository source is version **1.9.0**. The latest-release page is authoritative for which version and artifacts have actually been published; source can be ahead of the most recent release while a release is being prepared.
+The repository source is version **1.9.1**. The latest-release page is authoritative for which version and artifacts have actually been published; source can be ahead of the most recent release while a release is being prepared.
 
 Check the installation:
 
@@ -403,9 +403,13 @@ For common safe edits, these small commands compile into the same guarded Core p
 ```bash
 threadmoth replace-exact config.txt OLD NEW
 threadmoth set-value config.json $.server.port 8080
+threadmoth set-value setup.cfg metadata.version 0.2.0 --string
+threadmoth set-string .env.local API_HOST 127.0.0.1
 threadmoth create-file notes.txt "managed file"
 threadmoth doctor --json
 ```
+
+`set-value` parses its value strictly as JSON. Use `--string` or `set-string` when the intended value is a literal string; Threadmoth does not silently coerce invalid JSON. The Target Registry is the canonical classifier for extensions, special filenames and filename families, and the CLI and MCP shorthands use the same resolver.
 
 Shorthands authorize one file, one target and one changed region. They refuse ambiguity and stale state. When a refusal includes deterministic `recovery` remedies, `threadmoth suggest --from-refusal refusal.json` emits complete guarded next-request templates; the caller still chooses among candidates.
 

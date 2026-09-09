@@ -26,6 +26,9 @@ pub enum Command {
     /// Set one structured value using the canonical provider pipeline.
     SetValue(SetValueArgs),
 
+    /// Set one structured value as an explicit UTF-8 string.
+    SetString(SetStringArgs),
+
     /// Create one missing file without overwriting an existing destination.
     CreateFile(CreateFileArgs),
 
@@ -175,6 +178,17 @@ pub struct SetValueArgs {
     pub file: std::path::PathBuf,
     pub path: String,
     /// JSON spelling of the value, for example 8080, true, or "enabled".
+    pub value: String,
+    /// Treat VALUE as a literal UTF-8 string instead of parsing it as JSON.
+    #[arg(long)]
+    pub string: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct SetStringArgs {
+    pub file: std::path::PathBuf,
+    pub path: String,
+    /// Literal UTF-8 string value.
     pub value: String,
 }
 
