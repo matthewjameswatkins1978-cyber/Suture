@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     strategy:
@@ -12,28 +15,28 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - run: cargo fmt -- --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test
-      - run: cargo build --release
-      - run: cargo run --release -- benchmark --quick --json
-      - run: cargo run --release -- benchmark --torture --json
-      - run: cargo run --release -- --version
-      - run: cargo run --release -- doctor
-      - run: cargo run --release -- doctor --json
-      - run: cargo run --release -- capabilities
-      - run: cargo run --release -- capabilities --json --all
-      - run: cargo run --release -- examples exact-text-replacement
-      - run: cargo run --release -- schema
-      - run: cargo run --release -- schema request --json
-      - run: cargo run --release -- explain TARGET_AMBIGUOUS --json
-      - run: cargo run --release -- suggest Cargo.toml --goal set-value --at package.name
-      - run: cargo run --release -- completions bash > threadmoth.bash
-      - run: cargo run --release -- manpage --output threadmoth.1
-      - run: cargo run --release -- benchmark tough --json
-      - run: cargo run --release -- torture --json
-      - run: cargo run --release -- --help
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked --release
+      - run: cargo run --locked --release -- benchmark --quick --json
+      - run: cargo run --locked --release -- benchmark --torture --json
+      - run: cargo run --locked --release -- --version
+      - run: cargo run --locked --release -- doctor
+      - run: cargo run --locked --release -- doctor --json
+      - run: cargo run --locked --release -- capabilities
+      - run: cargo run --locked --release -- capabilities --json --all
+      - run: cargo run --locked --release -- examples exact-text-replacement
+      - run: cargo run --locked --release -- schema
+      - run: cargo run --locked --release -- schema request --json
+      - run: cargo run --locked --release -- explain TARGET_AMBIGUOUS --json
+      - run: cargo run --locked --release -- suggest Cargo.toml --goal set-value --at package.name
+      - run: cargo run --locked --release -- completions bash > threadmoth.bash
+      - run: cargo run --locked --release -- manpage --output threadmoth.1
+      - run: cargo run --locked --release -- benchmark tough --json
+      - run: cargo run --locked --release -- torture --json
+      - run: cargo run --locked --release -- --help
