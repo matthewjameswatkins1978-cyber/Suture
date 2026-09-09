@@ -1,17 +1,10 @@
 # Benchmark report
 
-The release binary includes correctness-checked benchmark and torture modes. They measure deterministic local execution, not AI token savings or a model comparison.
+Threadmoth's benchmark suite is correctness-first. It measures deterministic local execution, not AI token savings or model quality.
 
-The primary falsification metric is **wrong mutation reported as successful**. The harness checks expected bytes for successful mutations and refusal for malformed, ambiguous, and stale cases. It also records elapsed time across increasingly difficult file shapes.
+The primary falsification metric is **wrong mutation reported as successful**. Every expected successful mutation has its resulting bytes checked; malformed, ambiguous and stale cases are expected to refuse. A timing result is not considered useful if correctness is wrong.
 
-Run the standard benchmark and the safety suite:
-
-```text
-threadmoth benchmark
-threadmoth benchmark --torture
-```
-
-The benchmark modes are:
+## Commands
 
 ```text
 threadmoth benchmark --quick
@@ -20,76 +13,46 @@ threadmoth benchmark --tough
 threadmoth benchmark --torture
 ```
 
-Add `--json` for machine-readable output. The tough profile adds 5 MiB and 32 MiB files, a two-million-byte long-line refinement case, a many-line case, and 250 repeated small-file checks. The long-line refinement case uses desired-state planning to exercise prefix/suffix trimming and the bounded byte-refinement fallback. Every benchmark checks correctness and exits non-zero if an expected successful mutation is wrong.
+Add `--json` for machine-readable output. The compatibility forms `threadmoth benchmark tough` and `threadmoth torture` remain accepted, but the flag forms are canonical.
 
-Threadmoth 1.8.1 gives benchmark and torture runs a compact human presentation while preserving the existing structured `--json` report for scripts and agents. A human benchmark now ends with a one-line release signal such as:
+The tough profile includes large text, long-line refinement, many-line input and repeated small-file work. Torture adds deterministic safety regressions, transaction/recovery checks, containment cases where the host supports them, and FOOTGUN-100.
+
+## Current 1.9 local performance evidence
+
+The current checked-in [performance results](performance-results.md) record Windows x86-64 smoke measurements from Rust 1.98.1. Each build ran the built-in tough profile and every run reported `wrong_applied: 0`.
+
+| Build | Size (bytes) | tiny (us) | config 30k (us) | text 1m (us) | text 5m (us) | text 32m (us) | 250 small files (us) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| portable release | 34,688,512 | 389.956 | 699.410 | 7,481.520 | 37,073.540 | 240,496.800 | 3,977.808 |
+| portable maxperf | 33,084,416 | 475.708 | 711.678 | 7,947.524 | 40,352.530 | 258,230.033 | 1,246.616 |
+| modern x86-64-v3 | 33,177,088 | 409.793 | 675.416 | 7,956.200 | 32,575.700 | 213,768.200 | 1,208.274 |
+| native local | 33,056,768 | 411.670 | 702.258 | 6,535.620 | 32,555.510 | 210,113.667 | 1,292.970 |
+
+These are local measurements, not cross-platform guarantees. They show why Threadmoth does not simply label one compiler profile "fastest": different workloads favour different configurations.
+
+The 1.9 full opt-level 2/3 and thin/fat LTO matrix, separate PGO training/validation and published-artifact updater exercise remain release gates before declaring a final performance winner or shipping PGO. See [Performance builds](performance-builds.md) for the policy.
+
+## Binary-size context
+
+The previously installed 1.8.1 Windows executable was 27,543,552 bytes. The measured 1.9 portable Windows binary was 34,688,512 bytes. The increase reflects the admitted Java, C#, PHP, HCL and YAML grammars plus the new coverage registry and INI provider.
+
+That size increase is recorded rather than hidden. Threadmoth does not fragment the official capability set into a plugin zoo merely to make the executable look smaller.
+
+## Reporting benchmark evidence
+
+Record at least:
+
+- Threadmoth version and commit;
+- Rust and LLVM/toolchain version;
+- OS, target triple and CPU;
+- build flavour and compiler flags;
+- binary size;
+- benchmark profile;
+- raw/summary timings;
+- `wrong_applied` or equivalent correctness result.
+
+The important release signal remains:
 
 ```text
-PASS  8/8 cases · 0 wrong mutations · correctness checked
+wrong successful mutations = 0
 ```
-
-The torture mode runs deterministic apply/refusal/stale-identity/transaction-cleanup checks, symlink containment where the host permits link creation, and FOOTGUN-100. Its human output uses the same table-and-summary presentation as benchmark. A host capability skip is not treated as a product failure, while any failed safety case is non-zero.
-
-For compatibility, the older forms `threadmoth benchmark tough` and `threadmoth torture` remain accepted, but the flag forms above are canonical.
-
-Results are environment-dependent. The checked-in harness is the reproducible evidence source; future runs should record machine, Rust version, and output rather than treating local numbers as universal claims.
-
-## Current observed Threadmoth 1.2 tough-profile run
-
-This run was supplied from a live tough-profile execution on 2026-09-04:
-
-| case | bytes | iterations | wrong applied | average |
-|---|---:|---:|---:|---:|
-| tiny | 21 | 100 | 0 | 866.7 us |
-| config_30k | 30,008 | 50 | 0 | 1,329.4 us |
-| text_1m | 1,000,008 | 25 | 0 | 14,263.7 us |
-| text_5m | 5,000,008 | 10 | 0 | 55,721.7 us |
-| text_32m | 32,000,008 | 3 | 0 | 290,643.4 us |
-| many_lines_2m | 1,999,992 | 10 | 0 | 28,951.9 us |
-| long_line_2m | 2,000,006 | 5 | 0 | 17,139.8 us |
-| small_files_250 | 2,500 total | 1 batch | 0 | 5,253.5 us |
-
-The important correctness result is **zero wrong successful mutations across the entire tough profile**.
-
-The timing result is also useful context: in this observed run, a 1 MB mutation completed in about 14.3 ms, 5 MB in about 55.7 ms, and 32 MB in about 291 ms. These are local measurements, not universal performance guarantees.
-
-## Earlier Windows x86_64 run
-
-The following was produced on 2026-09-03 with the release binary on this Windows x86_64 host:
-
-| case | bytes | iterations | wrong applied | average | certificate |
-|---|---:|---:|---:|---:|---:|
-| tiny | 21 | 25 | 0 | 367.2 us | 999 B |
-| config_30k | 30,008 | 25 | 0 | 705.8 us | 1,013 B |
-| text_1m | 1,000,008 | 25 | 0 | 4,755.2 us | 1,021 B |
-
-This is one local run, not a cross-platform release claim. The important result is zero wrong successful mutations in the checked cases; Linux numbers and CI results must be recorded separately when available.
-
-## Windows x86_64 pass 1 rerun
-
-The pass-1 branch was rerun on 2026-09-04 with the same checked-in harness after the newline-index and success-path verification changes:
-
-| case | bytes | iterations | wrong applied | average | certificate |
-|---|---:|---:|---:|---:|---:|
-| tiny | 21 | 25 | 0 | 622.1 us | 1,483 B |
-| config_30k | 30,008 | 25 | 0 | 812.1 us | 1,497 B |
-| text_1m | 1,000,008 | 25 | 0 | 7,937.5 us | 1,505 B |
-
-The timings are a single Windows run and are not a before/after claim; the certificate sizes differ from the earlier run because the branch includes later protocol/runtime changes. The safety signal remains zero incorrect successful mutations.
-
-## Earlier Threadmoth 1.2 tough-profile run
-
-An earlier release-candidate command was run on 2026-09-04 on a Windows x86_64 host:
-
-| case | bytes | iterations | wrong applied | average |
-|---|---:|---:|---:|---:|
-| tiny | 21 | 100 | 0 | 456.1 us |
-| config_30k | 30,008 | 50 | 0 | 835.7 us |
-| text_1m | 1,000,008 | 25 | 0 | 7,571.8 us |
-| text_5m | 5,000,008 | 10 | 0 | 37,258.2 us |
-| text_32m | 32,000,008 | 3 | 0 | 251,627.2 us |
-| many_lines_2m | 1,999,992 | 10 | 0 | 27,400.9 us |
-| long_line_2m | 2,000,006 | 5 | 0 | 16,046.4 us |
-| small_files_250 | 2,500 total | 250 | 0 | 2,580.8 us |
-
-These earlier measurements are retained for history, but the README uses the current observed tough-profile run above until a new release run is recorded.
