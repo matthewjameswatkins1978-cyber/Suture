@@ -1,5 +1,14 @@
 # Break the moth
 
+## Threadmoth 1.8.1 recovery focus
+
+Field testing should record whether an agent stayed inside the Threadmoth
+workflow after `REFUSED`: did it consume the certificate remedy, construct the
+guarded retry, and obtain a final certificate? Record ambiguity, stale state,
+bad schema, effect-budget, prepared-plan, transaction, and path-escape cases
+separately. A raw-write fallback is an observed outcome, not a successful
+recovery.
+
 Threadmoth is ready for field testing by humans and coding agents.
 
 The goal of this phase is not stars. It is evidence: real repository edits, real refusals, real agent behaviour, and real failures we can fix.

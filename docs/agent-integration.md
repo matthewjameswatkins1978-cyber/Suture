@@ -40,7 +40,7 @@ An agent should:
 1. inspect capabilities before guessing a request shape;
 2. use `suggest` for unfamiliar files or formats;
 3. preview when the intended effect is not obvious, or use a prepared plan when work must cross an agent-step or human review boundary;
-4. treat `REFUSED` as information, not an obstacle to route around;
+4. treat `REFUSED` as information, consume its machine-readable `recovery` remedies, and let the caller choose the next request;
 5. only fall back to a broader edit when Threadmoth genuinely does not cover the task or the user explicitly authorizes the wider effect;
 6. preserve and report the resulting certificate when diagnosing surprising behaviour.
 
@@ -49,6 +49,16 @@ An agent should:
 Threadmoth is not an AI task planner, formatter, compiler, test runner, Git client, or shell. Its `plan` command prepares a deterministic guarded mutation artifact; it does not decide what work should be done.
 
 The model decides what should happen. Threadmoth provides a narrow deterministic mutation boundary and proves what actually changed.
+
+## Recovery loop
+
+Certificates may contain `recovery.requires_choice` and bounded remedies. For
+ambiguity, each remedy includes a complete request patch with the exact
+`candidate_guard` and observed `expected_pre_hash`. For stale state, the
+remedy refreshes the observed hash; for effect budgets, it reports the exact
+observed dimension. `suggest --from-refusal` exposes the same templates for
+agents that prefer a separate discovery step. Threadmoth never picks a
+candidate on the caller's behalf.
 
 ## MCP
 

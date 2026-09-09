@@ -6,7 +6,7 @@ Threadmoth is a fast, deterministic structural search-and-rewrite runtime for AI
 
 | Document | Purpose |
 |---|---|
-| [CLI guide](cli.md) | Threadmoth 1.8 commands, plans, assertions, updater, desired-state mode, recovery inspection, completion, help and manpage generation |
+| [CLI guide](cli.md) | Threadmoth 1.8.1 commands, plans, assertions, updater, safe shorthands, desired-state mode, recovery inspection, completion, help and manpage generation |
 | [Agent integration](agent-integration.md) | Minimal instructions and safe usage flow for coding agents and MCP clients |
 | [Architecture](architecture.md) | How Threadmoth separates observation, identification, mutation, verification, and commit |
 | [Protocol](protocol.md) | Request/response contract and machine-facing behaviour |
@@ -45,6 +45,7 @@ The benchmark checks expected bytes before presenting timing results. Treat repo
 
 ```text
 threadmoth help
+threadmoth doctor --json
 threadmoth doctor
 threadmoth capabilities
 threadmoth capabilities --for PATH
@@ -58,7 +59,7 @@ threadmoth manpage
 threadmoth mcp
 ```
 
-See the [CLI guide](cli.md) for the Threadmoth 1.8 command surface and [Agent integration](agent-integration.md) for the intended discovery → plan/preview → refusal recovery → commit loop.
+See the [CLI guide](cli.md) for the Threadmoth 1.8.1 command surface and [Agent integration](agent-integration.md) for the intended discovery → plan/preview → refusal recovery → commit loop.
 
 For machine integration, mutation output is JSON on stdout, diagnostics are on stderr, and stable exit codes distinguish success/no-change, refusal, and runtime failure.
 

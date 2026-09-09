@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.8.1 - Completion and hardening
+
+Threadmoth 1.8.1 hardens the 1.8 agent workflow without expanding semantic authorship. It adds actionable refusal recovery, bounded cross-process mutation locking, strict structured schema diagnostics, safe shorthand entry points, structured doctor output, and adversarial plan/filesystem coverage.
+
+- Added deterministic refusal remedies and complete guarded retry templates for ambiguity, stale state, missing targets, and effect-budget refusals.
+- Added `replace-exact`, `set-value`, and `create-file` CLI shorthands plus equivalent exact-replace/set-value MCP tools through the canonical Core pipeline.
+- Added `WORKSPACE_BUSY` fail-closed locking across mutations, plan application, transactions, and recovery.
+- Added protocol 1.3.1 while continuing to accept protocol 1.3.0, 1.2.0, and 1.1.0.
+- Added `threadmoth doctor --json` and structured schema diagnostics for strict parser failures.
+- Added release, plan, path-identity, and refusal-recovery regression coverage.
+
 ## 1.8.0 - Plans and proof
 
 Threadmoth 1.8 makes guarded mutations portable and provable. It adds deterministic serialisable plans, exact stale-state rechecking, prospective and committed postcondition checks, and an explicit CLI-only updater for standalone installations.

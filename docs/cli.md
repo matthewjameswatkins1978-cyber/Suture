@@ -1,6 +1,6 @@
 # Threadmoth CLI
 
-Threadmoth 1.8.0 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
+Threadmoth 1.8.1 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
 
 The MCP stdio server exposes read-only `threadmoth_inspect`, `threadmoth_suggest`, and `threadmoth_explain` alongside `threadmoth_capabilities`, `threadmoth_preview`, `threadmoth_plan`, `threadmoth_apply_plan`, `threadmoth_transact_preview`, mutation, and transaction tools. Preview runs the same guarded planning and certification pipeline as mutation with commit disabled. Self-update remains CLI-only. JSON-RPC notifications, including `notifications/initialized`, are consumed without a response; ordinary requests receive a JSON-RPC result or standard error response.
 
@@ -101,7 +101,7 @@ The summary shows the outcome, provider, effect size, budget result, newline/pre
 }
 ```
 
-Threadmoth 1.8.0 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
+Threadmoth 1.8.1 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
 
 ## Shell completion
 
@@ -203,4 +203,17 @@ threadmoth doctor
 
 ## Compatibility policy
 
-Threadmoth 1.8.0 keeps the important pre-1.3 command and provider spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. It accepts protocol 1.1 and 1.2 requests with their promised semantics while advertising protocol 1.3 as current.
+Threadmoth 1.8.1 keeps the important pre-1.3 command and provider spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and the request provider alias `file`. It accepts protocol 1.1, 1.2, and 1.3.0 requests with their promised semantics while advertising protocol 1.3.1 as current.
+
+## Safe shorthands and plan review
+
+`replace-exact FILE OLD NEW`, `set-value FILE PATH JSON_VALUE`, and
+`create-file FILE CONTENT` compile into ordinary canonical requests. Each uses
+one-file, one-target, one-region budgets and still refuses ambiguity or stale
+state. MCP exposes the equivalent `threadmoth_exact_replace` and
+`threadmoth_set_value` tools.
+
+`threadmoth explain --plan plan.json --format diff` and
+`threadmoth explain --plan plan.json --format markdown` are read-only review
+renderers. They include the operation, hashes, fresh/stale state, and bounded
+before/after diff; they never apply the plan.

@@ -23,13 +23,16 @@ use threadmoth::{
 
 use cli::{
     ApplyPlanArgs, BenchmarkArgs, BenchmarkProfile, CapabilitiesArgs, Cli, Command,
-    CompletionShell, HelpArgs, PlanArgs, RecoverArgs, SchemaArgs, SuggestArgs, UpdateArgs,
-    THREADMOTH_VERSION,
+    CompletionShell, CreateFileArgs, DoctorArgs, ExplainFormat, HelpArgs, PlanArgs, RecoverArgs,
+    ReplaceExactArgs, SchemaArgs, SetValueArgs, SuggestArgs, UpdateArgs, THREADMOTH_VERSION,
 };
 
 fn main() {
     let cli = Cli::parse();
     match cli.command {
+        Command::ReplaceExact(args) => run_replace_exact(args),
+        Command::SetValue(args) => run_set_value(args),
+        Command::CreateFile(args) => run_create_file(args),
         Command::Mutate(args) => run_request(args.request.as_deref(), false, args.summary),
         Command::Preview(args) => run_request(args.request.as_deref(), true, args.summary),
         Command::Transact(args) => {
@@ -46,9 +49,14 @@ fn main() {
         Command::Benchmark(args) => run_benchmark(args),
         Command::Torture { json } => std::process::exit(threadmoth::torture::run(json)),
         Command::Help(args) => run_help(args),
-        Command::Explain { code, plan, json } => {
+        Command::Explain {
+            code,
+            plan,
+            json,
+            format,
+        } => {
             if let Some(plan) = plan {
-                run_explain_plan(&plan, json);
+                run_explain_plan(&plan, json, format);
             } else if let Some(code) = code {
                 print_explain(&code, json);
             }
@@ -56,12 +64,137 @@ fn main() {
         Command::Suggest(args) => run_suggest(args),
         Command::Inspect { path } => run_inspect(&path),
         Command::Schema(args) => run_schema(args),
-        Command::Doctor => run_doctor(),
+        Command::Doctor(args) => run_doctor(args),
         Command::Update(args) => run_update(args),
         Command::Completions { shell } => run_completions(shell),
         Command::Manpage { output } => run_manpage(output.as_deref()),
         Command::Mcp => cli_mcp::run_mcp(),
     }
+}
+
+fn shorthand_request(
+    file: &Path,
+    operation: threadmoth::protocol::OperationPayload,
+    bytes: usize,
+) -> Request {
+    Request {
+        version: PROTOCOL_VERSION.into(),
+        request_id: format!("shorthand-{}", file.display()),
+        allow_generated: false,
+        file_path: file.to_string_lossy().replace('\\', "/"),
+        namespace: Default::default(),
+        expected_pre_hash: None,
+        region_guard: None,
+        candidate_guard: None,
+        cardinality: threadmoth::protocol::Cardinality::ExactlyOne,
+        budget: EffectBudget {
+            max_files: Some(1),
+            max_matches: Some(1),
+            max_changed_regions: Some(1),
+            max_changed_lines: None,
+            max_changed_bytes: Some(bytes),
+            allowed_path_prefixes: Vec::new(),
+        },
+        operation,
+    }
+}
+
+fn run_shorthand(request: Request) {
+    let workspace = Workspace::new(env::current_dir().unwrap_or_else(|_| ".".into()))
+        .unwrap_or_else(|error| {
+            eprintln!("workspace initialization failed: {error}");
+            std::process::exit(3)
+        });
+    let certificate = execute_request(&workspace, &request, false);
+    emit_certificate(&certificate, false, false);
+    exit_for_outcome(certificate.outcome);
+}
+
+fn run_replace_exact(args: ReplaceExactArgs) {
+    let bytes = args.old.len().max(args.new.len());
+    run_shorthand(shorthand_request(
+        &args.file,
+        threadmoth::protocol::OperationPayload::Text(
+            threadmoth::provider::text::TextOperation::Replace {
+                target: args.old,
+                replacement: args.new,
+            },
+        ),
+        bytes,
+    ));
+}
+
+fn run_set_value(args: SetValueArgs) {
+    let value: serde_json::Value = match serde_json::from_str(&args.value) {
+        Ok(value) => value,
+        Err(error) => {
+            let mut certificate = empty_cert(RefusalReason::MalformedInput {
+                details: format!("set-value expects a JSON value: {error}"),
+            });
+            certificate.schema_diagnostic =
+                Some(threadmoth::protocol::schema_diagnostic(&error.to_string()));
+            emit_certificate(&certificate, false, false);
+            std::process::exit(2);
+        }
+    };
+    let extension = args
+        .file
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let operation = match extension.as_str() {
+        "json" => threadmoth::protocol::OperationPayload::Json(
+            threadmoth::provider::json::JsonOperation::Set {
+                path: args.path,
+                value,
+            },
+        ),
+        "jsonc" => threadmoth::protocol::OperationPayload::Jsonc(
+            threadmoth::provider::json::JsonOperation::Set {
+                path: args.path,
+                value,
+            },
+        ),
+        "yaml" | "yml" => threadmoth::protocol::OperationPayload::Yaml(
+            threadmoth::provider::yaml::YamlOperation::Set {
+                path: args.path,
+                value,
+            },
+        ),
+        "toml" => match serde_json::from_value(value) {
+            Ok(value) => threadmoth::protocol::OperationPayload::Toml(
+                threadmoth::provider::toml::TomlOperation::Set {
+                    path: args.path,
+                    value,
+                },
+            ),
+            Err(error) => {
+                eprintln!("set-value refused: TOML value is not representable: {error}");
+                std::process::exit(2);
+            }
+        },
+        _ => {
+            eprintln!("set-value refused: use a .json, .jsonc, .toml, .yaml, or .yml file");
+            std::process::exit(2);
+        }
+    };
+    run_shorthand(shorthand_request(&args.file, operation, args.value.len()));
+}
+
+fn run_create_file(args: CreateFileArgs) {
+    let content = args.content.into_bytes();
+    let bytes = content.len().max(1);
+    run_shorthand(shorthand_request(
+        &args.file,
+        threadmoth::protocol::OperationPayload::File(
+            threadmoth::lifecycle::FileOperation::CreateFile {
+                expected_absent: true,
+                content,
+            },
+        ),
+        bytes,
+    ));
 }
 
 fn run_update(args: UpdateArgs) {
@@ -270,7 +403,7 @@ fn run_apply_plan(args: ApplyPlanArgs) {
     exit_for_outcome(outcome);
 }
 
-fn run_explain_plan(path: &Path, json: bool) {
+fn run_explain_plan(path: &Path, json: bool, format: Option<ExplainFormat>) {
     let input = match fs::read(path) {
         Ok(input) => input,
         Err(error) => {
@@ -299,6 +432,12 @@ fn run_explain_plan(path: &Path, json: bool) {
         .as_ref()
         .and_then(|workspace| threadmoth::pipeline::check_prepared_plan(workspace, &plan).err());
     let safe = refusal.is_none();
+    if !json {
+        if let Some(format) = format {
+            render_plan_review(&plan, workspace.as_ref(), format);
+            return;
+        }
+    }
     if json {
         println!(
             "{}",
@@ -339,6 +478,90 @@ fn run_explain_plan(path: &Path, json: bool) {
             println!("Reason: {} ({reason:?})", reason.code());
         }
     }
+}
+
+fn render_plan_review(plan: &PreparedPlan, workspace: Option<&Workspace>, format: ExplainFormat) {
+    let title = match format {
+        ExplainFormat::Diff => "Threadmoth plan diff",
+        ExplainFormat::Markdown => "# Threadmoth plan review",
+    };
+    println!(
+        "{title}\nPlan: {}\nProtocol: {}",
+        plan.plan_id, plan.protocol_version
+    );
+    for operation in &plan.operations {
+        let Some(workspace) = workspace else {
+            println!("\n{}\nstate: UNAVAILABLE", operation.file_path);
+            continue;
+        };
+        let current = workspace
+            .resolve_namespaced_path(&operation.file_path, &operation.request.namespace)
+            .ok()
+            .and_then(|path| workspace.read_file(path).ok());
+        let Some(original) = current else {
+            println!("\n{}\nstate: UNAVAILABLE", operation.file_path);
+            continue;
+        };
+        let current_hash = threadmoth::engine::compute_sha256(&original);
+        let state = if current_hash == operation.pre_hash {
+            "FRESH"
+        } else {
+            "STALE"
+        };
+        let edits = operation
+            .edits
+            .iter()
+            .map(|edit| threadmoth::engine::ByteEdit {
+                start: edit.offset,
+                end: edit.offset.saturating_add(edit.delete_len),
+                replacement: edit.replacement.clone(),
+            })
+            .collect::<Vec<_>>();
+        let candidate = threadmoth::engine::apply_byte_edits(&original, &edits).ok();
+        let diff = candidate
+            .as_ref()
+            .map(|candidate| {
+                similar::TextDiff::from_lines(
+                    &String::from_utf8_lossy(&original),
+                    &String::from_utf8_lossy(candidate),
+                )
+                .unified_diff()
+                .context_radius(3)
+                .header("before", "after")
+                .to_string()
+            })
+            .unwrap_or_else(|| "stored edits are invalid".into());
+        match format {
+            ExplainFormat::Diff => println!(
+                "\n--- {}\n+++ {}\nprovider: {}\nstate: {}\npre_hash: {}\nprospective_hash: {}\n{}",
+                operation.file_path,
+                operation.file_path,
+                operation.provider,
+                state,
+                operation.pre_hash,
+                operation.prospective_hash,
+                bounded_review(&diff),
+            ),
+            ExplainFormat::Markdown => println!(
+                "\n## {}\n\n- Provider: `{}`\n- State: **{}**\n- Pre-image: `{}`\n- Prospective: `{}`\n- Edits: `{}`\n\n```diff\n{}\n```",
+                operation.file_path,
+                operation.provider,
+                state,
+                operation.pre_hash,
+                operation.prospective_hash,
+                operation.edits.len(),
+                bounded_review(&diff),
+            ),
+        }
+    }
+}
+
+fn bounded_review(value: &str) -> String {
+    let mut result = value.chars().take(4096).collect::<String>();
+    if value.chars().count() > 4096 {
+        result.push_str("\n... review output truncated ...");
+    }
+    result
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -407,9 +630,11 @@ fn run_request(request_path: Option<&Path>, dry: bool, summary: bool) {
     let req: Request = match serde_json::from_str(&input) {
         Ok(r) => r,
         Err(e) => {
-            let certificate = empty_cert(RefusalReason::MalformedInput {
+            let mut certificate = empty_cert(RefusalReason::MalformedInput {
                 details: e.to_string(),
             });
+            certificate.schema_diagnostic =
+                Some(threadmoth::protocol::schema_diagnostic(&e.to_string()));
             emit_certificate(&certificate, dry, summary);
             std::process::exit(2)
         }
@@ -453,9 +678,11 @@ fn run_transaction(request_path: Option<&Path>, dry: bool, summary: bool) {
     let transaction: TransactionRequest = match serde_json::from_str(&input) {
         Ok(x) => x,
         Err(e) => {
-            let certificate = empty_transaction_certificate(RefusalReason::MalformedInput {
+            let mut certificate = empty_transaction_certificate(RefusalReason::MalformedInput {
                 details: format!("transaction request parse failed: {e}"),
             });
+            certificate.schema_diagnostic =
+                Some(threadmoth::protocol::schema_diagnostic(&e.to_string()));
             emit_transaction_certificate(&certificate, dry, summary);
             std::process::exit(2);
         }
@@ -865,7 +1092,7 @@ fn run_schema(args: SchemaArgs) {
     }
 }
 
-fn run_doctor() {
+fn run_doctor(args: DoctorArgs) {
     let root = env::current_dir().unwrap_or_else(|_| ".".into());
     let workspace = if Workspace::new(root).is_ok() {
         "ready"
@@ -888,6 +1115,29 @@ fn run_doctor() {
     } else {
         "disabled (package-managed or ambiguous installation)"
     };
+    if args.json {
+        let recovery = Workspace::new(env::current_dir().unwrap_or_else(|_| ".".into()))
+            .ok()
+            .and_then(|workspace| {
+                serde_json::to_value(threadmoth::recovery::list(&workspace)).ok()
+            });
+        println!(
+            "{}",
+            serde_json::json!({
+                "version": THREADMOTH_VERSION,
+                "protocol": PROTOCOL_VERSION,
+                "platform": {"os": env::consts::OS, "arch": env::consts::ARCH},
+                "installation_kind": installation.label(),
+                "executable": executable,
+                "workspace_readiness": workspace,
+                "recovery_journals": recovery,
+                "self_update_eligible": installation.is_standalone(),
+                "path_configured": path_status,
+                "shell": shell,
+            })
+        );
+        return;
+    }
     println!(
         "threadmoth doctor\nversion: {THREADMOTH_VERSION}\nos: {}\narch: {}\nworkspace: {workspace}\nprotocol: {PROTOCOL_VERSION}\nproviders: {providers}\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available\ninstallation: {}\nexecutable: {executable}\nself-update: {self_update}\nshell: {shell}\npath: {}\ncompletion: available (threadmoth completions {shell})\nmanpage: available (threadmoth manpage)",
         env::consts::OS,
@@ -1020,6 +1270,8 @@ fn empty_cert(reason: RefusalReason) -> Certificate {
         refusal_reason: Some(reason),
         failure_reason: None,
         reason_code: Some(reason_code),
+        recovery: None,
+        schema_diagnostic: None,
         diagnostics: Vec::new(),
         budget: EffectBudget::default(),
         effect: EffectUsage {
@@ -1047,6 +1299,8 @@ fn empty_transaction_certificate(reason: RefusalReason) -> TransactionCertificat
         refusal_reason: Some(reason.clone()),
         failure_reason: None,
         reason_code: Some(reason.code().into()),
+        recovery: None,
+        schema_diagnostic: None,
     }
 }
 

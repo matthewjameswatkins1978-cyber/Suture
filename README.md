@@ -161,6 +161,11 @@ threadmoth explain --plan plan.json
 threadmoth apply-plan --plan plan.json
 ```
 
+For supervisor or human review, `threadmoth explain --plan plan.json
+--format diff` and `--format markdown` provide read-only plan summaries with
+files, operations, hashes, assertions, effect size, and current stale/fresh
+state.
+
 A plan contains the resolved targets, expected pre-images, exact edits, budgets and assertions.
 
 It can be inspected by another agent or a human before anything is written.
@@ -375,7 +380,7 @@ It does one job:
 
 ## Install
 
-Download the appropriate standalone binary from the **[latest GitHub release](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/latest)** and put `threadmoth` on your `PATH`.
+Download the appropriate standalone binary from the **[Threadmoth v1.8.1 release](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.8.1)** and put `threadmoth` on your `PATH`.
 
 Check the installation:
 
@@ -391,6 +396,34 @@ Standalone installations can update explicitly:
 threadmoth update --check
 threadmoth update
 ```
+
+The v1.8.1 release includes Windows x86-64, Linux x86-64, macOS Apple
+Silicon, and macOS x86-64 archives, each with shell completions, a man page,
+SHA-256 checksums, and a release manifest. Standalone self-update verifies
+the selected archive and executable version before replacing the current
+binary; package-managed installations are reported rather than overwritten.
+
+For common safe edits, these small commands compile into the same guarded Core
+pipeline as canonical requests:
+
+```bash
+threadmoth replace-exact config.txt OLD NEW
+threadmoth set-value config.json $.server.port 8080
+threadmoth create-file notes.txt "managed file"
+threadmoth doctor --json
+```
+
+Shorthands authorize one file, one target, and one changed region. They refuse
+ambiguity and stale state. When a refusal includes deterministic `recovery`
+remedies, `threadmoth suggest --from-refusal refusal.json` emits complete
+guarded next-request templates; the caller still chooses among candidates.
+
+The current protocol is 1.3.1 and remains compatible with 1.3.0, 1.2.0, and
+1.1.0 requests. Mutation, plan application, transaction, filesystem lifecycle,
+and recovery writes use a bounded cooperating-process workspace lock and refuse
+with `WORKSPACE_BUSY` rather than waiting indefinitely. Unrelated external
+writers remain covered by stale-state and landed-byte verification, but are not
+controlled by that lock.
 
 Mutation operations remain local. The explicit update command is the only normal Threadmoth operation that needs network access.
 

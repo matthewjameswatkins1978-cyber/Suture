@@ -12,13 +12,16 @@ use crate::provider::web::WebOperation;
 use crate::provider::yaml::YamlOperation;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-pub const PROTOCOL_VERSION: &str = "1.3.0";
+pub const PROTOCOL_VERSION: &str = "1.3.1";
 pub const LEGACY_PROTOCOL_VERSION: &str = "1.1.0";
 pub const PREVIOUS_PROTOCOL_VERSION: &str = "1.2.0";
+pub const PREVIOUS_CURRENT_PROTOCOL_VERSION: &str = "1.3.0";
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     PROTOCOL_VERSION,
+    PREVIOUS_CURRENT_PROTOCOL_VERSION,
     PREVIOUS_PROTOCOL_VERSION,
     LEGACY_PROTOCOL_VERSION,
 ];
@@ -157,6 +160,10 @@ pub struct TransactionCertificate {
     pub refusal_reason: Option<RefusalReason>,
     pub failure_reason: Option<FailureReason>,
     pub reason_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<RecoveryInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_diagnostic: Option<SchemaDiagnostic>,
 }
 
 /// A hard upper bound on the mutation's prepared effect. `None` means that
@@ -300,6 +307,9 @@ pub enum RefusalReason {
         limit: usize,
         actual: usize,
     },
+    WorkspaceBusy {
+        lock_path: String,
+    },
 }
 
 impl RefusalReason {
@@ -332,7 +342,71 @@ impl RefusalReason {
             Self::PlanInvalid { .. } => "PLAN_INVALID",
             Self::PlanStale { .. } => "PLAN_STALE",
             Self::PlanTooLarge { .. } => "PLAN_TOO_LARGE",
+            Self::WorkspaceBusy { .. } => "WORKSPACE_BUSY",
         }
+    }
+}
+
+/// Deterministic, bounded advice for constructing the next legal request.
+/// Threadmoth reports choices; the caller remains responsible for selecting one.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryRemedy {
+    pub kind: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_patch: Option<Value>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryInfo {
+    pub requires_choice: bool,
+    pub remedies: Vec<RecoveryRemedy>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaDiagnostic {
+    pub reason: String,
+    pub field: String,
+    pub location: String,
+    pub expected_fields: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_field: Option<String>,
+    pub message: String,
+}
+
+/// Turn serde's strict parser error into bounded, agent-facing structure.
+pub fn schema_diagnostic(error: &str) -> SchemaDiagnostic {
+    let field = error
+        .split("unknown field `")
+        .nth(1)
+        .and_then(|rest| rest.split('`').next())
+        .or_else(|| {
+            error
+                .split("missing field `")
+                .nth(1)
+                .and_then(|rest| rest.split('`').next())
+        })
+        .unwrap_or("request")
+        .to_owned();
+    let pointer_typo = field == "pointer";
+    SchemaDiagnostic {
+        reason: "SCHEMA_INVALID".into(),
+        field,
+        location: if pointer_typo {
+            "$.operation.operation.pointer".into()
+        } else {
+            "$".into()
+        },
+        expected_fields: if pointer_typo {
+            vec!["path".into(), "value".into()]
+        } else {
+            Vec::new()
+        },
+        suggested_field: pointer_typo.then_some("path".into()),
+        message: error.chars().take(512).collect(),
     }
 }
 
@@ -555,6 +629,10 @@ pub struct Certificate {
     pub refusal_reason: Option<RefusalReason>,
     pub failure_reason: Option<FailureReason>,
     pub reason_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<RecoveryInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_diagnostic: Option<SchemaDiagnostic>,
     pub diagnostics: Vec<String>,
     pub budget: EffectBudget,
     pub effect: EffectUsage,
