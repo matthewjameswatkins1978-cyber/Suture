@@ -22,7 +22,7 @@ Threadmoth 1.9.0 makes the coverage model explicit without expanding into compil
 - Dockerfile, Makefile and Java `.properties` remain explicit exact-text targets rather than overstated structural support.
 - HCL support does not include Terraform resource/provider/state semantics.
 - Advanced YAML constructs remain refusal boundaries where local preservation cannot be proved.
-- The full compiler optimization matrix, separate PGO training/validation and published-release updater exercise remain release-performance gates until completed.
+- The full compiler optimization matrix and separate PGO training/validation remain follow-up performance work; they are not required to publish the portable and modern 1.9.0 artifacts. They remain prerequisites for declaring a final performance winner or shipping PGO.
 
 The correctness requirement remains unchanged: **wrong successful mutations must remain zero**.
 

@@ -173,7 +173,7 @@ Threadmoth 1.9 deliberately stops short of several tempting expansions:
 - SQL support is a common-dialect envelope, not complete vendor-specific SQL;
 - HTML support does not claim deep JavaScript/CSS semantics inside embedded `<script>` or `<style>` regions;
 - runtime loading of arbitrary third-party Tree-sitter grammars is intentionally unsupported;
-- the full compiler optimization matrix, PGO validation and published 1.9 updater exercise remain release-performance gates until completed.
+- the full compiler optimization matrix and PGO validation remain follow-up performance work, not blockers for the portable and modern 1.9.0 artifacts. The published 1.9 updater exercise remains part of release acceptance.
 
 If one of those limits blocks real work, report the use case rather than assuming it must become a feature.
 

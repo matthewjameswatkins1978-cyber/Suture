@@ -30,7 +30,7 @@ The current checked-in [performance results](performance-results.md) record Wind
 
 These are local measurements, not cross-platform guarantees. They show why Threadmoth does not simply label one compiler profile "fastest": different workloads favour different configurations.
 
-The 1.9 full opt-level 2/3 and thin/fat LTO matrix, separate PGO training/validation and published-artifact updater exercise remain release gates before declaring a final performance winner or shipping PGO. See [Performance builds](performance-builds.md) for the policy.
+The 1.9 full opt-level 2/3 and thin/fat LTO matrix and separate PGO training/validation remain follow-up performance work, not publication blockers for the portable and modern artifacts. They remain prerequisites for declaring a final performance winner or shipping PGO. The published-artifact updater exercise remains part of release acceptance. See [Performance builds](performance-builds.md) for the policy.
 
 ## Binary-size context
 

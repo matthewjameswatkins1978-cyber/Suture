@@ -12,7 +12,7 @@ Stable published release: [Threadmoth 1.8.1](https://github.com/matthewjameswatk
 
 Threadmoth 1.9 source is merged to `main`, but **v1.9.0 has not yet been tagged or published** at this snapshot. The published release page therefore correctly still shows 1.8.1.
 
-The remaining 1.9 release gates include the full compiler optimization matrix, separate PGO training/validation, published-release updater exercise, and final cross-platform artifact/runtime verification. Until those gates are complete, do not describe v1.9.0 as a published release.
+The full compiler optimization matrix and separate PGO training/validation are follow-up performance work, not blockers for publishing the portable and modern 1.9.0 artifacts. Hard publication gates are the protected `main` checks, the release workflow's cross-platform build/package/runtime checks, complete checksum/manifest generation, and the published-release updater exercise. Until those hard gates are complete, do not describe v1.9.0 as a published release.
 
 The repository slug is `/Threadmoth`; the old `/Suture` URL may redirect but is not the canonical identity.
 
@@ -87,7 +87,7 @@ The following entries are operational history. Their state should not be interpr
 
 | Target | Fit | Gate |
 |---|---|---|
-| Threadmoth v1.9.0 GitHub release | Highest | Complete release-performance/updater/runtime gates, then tag/publish from verified `main` |
+| Threadmoth v1.9.0 GitHub release | Highest | Complete updater/runtime acceptance, then tag/publish from verified `main`; PGO remains follow-up work |
 | Claude Code official directory | High | Authenticated submission plus live integration validation |
 | Gemini CLI gallery | High | Manifest review and live install validation before gallery submission |
 | skills.sh | High | Public skill can be installed by users; do not infer telemetry before observed use |

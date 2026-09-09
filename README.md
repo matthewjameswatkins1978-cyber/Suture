@@ -377,7 +377,7 @@ It does one job:
 
 Download the appropriate standalone binary from the **[latest GitHub release](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/latest)** and put `threadmoth` on your `PATH`.
 
-The repository source is version **1.9.0**. The latest-release page is authoritative for which version and artifacts have actually been published; source can be ahead of the most recent release while release gates are still running.
+The repository source is version **1.9.0**. The latest-release page is authoritative for which version and artifacts have actually been published; source can be ahead of the most recent release while a release is being prepared.
 
 Check the installation:
 

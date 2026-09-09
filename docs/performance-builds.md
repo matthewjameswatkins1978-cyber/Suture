@@ -69,4 +69,4 @@ Every candidate build must preserve the correctness contract and report zero wro
 
 The current local smoke data is recorded in [Performance results](performance-results.md). It shows that different configurations win different cases, so no configuration is labelled the universal winner yet.
 
-The full opt-level 2/3 and thin/fat LTO matrix, separate PGO training/validation, final cross-platform runtime verification and published-release updater exercise remain release gates. PGO is not enabled by default.
+The full opt-level 2/3 and thin/fat LTO matrix and separate PGO training/validation remain follow-up performance work. They are not required to publish the portable and modern 1.9.0 artifacts, but remain prerequisites for declaring a final performance winner or shipping PGO. Final cross-platform runtime verification and the published-release updater exercise are release-acceptance gates. PGO is not enabled by default.
