@@ -51,9 +51,8 @@ The 1.9 release workflow is wired for portable Windows x86-64, Linux x86-64, mac
 
 The updater must preserve compatible flavour selection and verify the expected release manifest, archive/checksum asset and executable version. A portable installation must not silently become a CPU-specific build.
 
-The v1.9.0 release published these artifacts. The 1.9.1 consistency release
-does not change the build flavours; check the GitHub Releases page for the
-currently published version and artifact availability.
+The v1.9.1 consistency release published these artifacts without changing the
+build flavours; see the [GitHub Releases page](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.9.1) for the current artifact set.
 
 ## How optimization is selected
 
