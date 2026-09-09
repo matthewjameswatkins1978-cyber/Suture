@@ -161,18 +161,13 @@ threadmoth explain --plan plan.json
 threadmoth apply-plan --plan plan.json
 ```
 
-For supervisor or human review, `threadmoth explain --plan plan.json
---format diff` and `--format markdown` provide read-only plan summaries with
-files, operations, hashes, assertions, effect size, and current stale/fresh
-state.
+For supervisor or human review, `threadmoth explain --plan plan.json --format diff` and `--format markdown` provide read-only plan summaries with files, operations, hashes, assertions, effect size, and current stale/fresh state.
 
 A plan contains the resolved targets, expected pre-images, exact edits, budgets and assertions.
 
 It can be inspected by another agent or a human before anything is written.
 
-When applied, the plan is treated as untrusted input.
-
-Threadmoth re-reads reality and re-checks everything.
+When applied, the plan is treated as untrusted input. Threadmoth re-reads reality and re-checks everything.
 
 If the repository changed:
 
@@ -180,11 +175,7 @@ If the repository changed:
 PLAN_STALE
 ```
 
-No fuzzy relocation.
-
-No automatic repair.
-
-No guessing.
+No fuzzy relocation. No automatic repair. No guessing.
 
 ---
 
@@ -192,38 +183,61 @@ No guessing.
 
 | Provider | Purpose |
 |---|---|
-| **Text** | Exact replacement, byte ranges, desired-state edits |
+| **Text** | Exact replacement, byte ranges and idempotent exact-text operations |
 | **JSON / JSONC** | Source-preserving structural value edits |
-| **TOML** | Structure-aware edits |
-| **YAML** | Conservative source-preserving edits |
-| **Markdown** | Heading-bounded changes |
-| **dotenv** | Key edits while preserving surrounding content |
+| **TOML** | Structure-aware dotted-key edits |
+| **YAML** | Conservative nested map/sequence scalar edits with source-local preservation |
+| **INI** | Source-preserving section/key edits for INI-style configuration |
+| **Markdown** | Heading/list/fenced-region bounded changes |
+| **dotenv** | Key edits while preserving comments and surrounding lines |
 | **Pattern** | Bounded regex operations |
 | **Patch** | Exact unified-diff application with no fuzzy relocation |
 | **Code** | Tree-sitter structural targeting |
 | **Web** | Structural HTML, CSS and XML targeting |
 | **Filesystem** | Guarded create, delete, rename and move |
-| **Desired state** | Bounded deterministic change from observed bytes to supplied bytes |
+| **Desired state** | Bounded deterministic change from observed bytes to supplied desired bytes |
 
-Syntax-aware code targeting includes:
+### Syntax-aware source coverage
+
+Programming and declarative syntax:
 
 ```text
 JavaScript
-JSX
 TypeScript
-TSX
 Python
 Rust
 Go
 C
 C++
+Java
+C#
+PHP
 Bash / Shell
 PowerShell
 SQL
+HCL / Terraform syntax
+```
+
+Syntax variants:
+
+```text
+JSX
+TSX
+```
+
+Web / markup syntax:
+
+```text
 HTML
 CSS
 XML
 ```
+
+PHP includes PHP source and embedded PHP parsing. HCL support is source syntax only; Threadmoth does not claim Terraform resource, provider, state or dependency semantics.
+
+Unsupported languages do not make an ordinary UTF-8 text file unusable. Threadmoth can still offer explicit exact text, strict patch, bounded pattern or desired-state routes where applicable. It never silently downgrades a structured request to a weaker route.
+
+See [Coverage](docs/coverage.md) for the full 1.9 model and current refusal boundaries.
 
 Providers locate candidates.
 
@@ -239,6 +253,7 @@ Start here:
 
 ```bash
 threadmoth capabilities
+threadmoth capabilities --for PATH --json
 threadmoth suggest PATH
 threadmoth inspect PATH
 ```
@@ -272,19 +287,7 @@ threadmoth explain REASON
 threadmoth suggest --from-refusal refusal.json
 ```
 
-Machine-facing mutation output is structured JSON.
-
-Diagnostics stay separate.
-
-Exit behaviour distinguishes:
-
-```text
-success / no change
-refusal
-runtime failure
-```
-
-Agents do not need to scrape conversational prose to understand what happened.
+Machine-facing mutation output is structured JSON. Diagnostics stay separate. Exit behaviour distinguishes success/no-change, refusal and runtime failure.
 
 ---
 
@@ -309,9 +312,7 @@ Minimal configuration:
 }
 ```
 
-The MCP interface exposes the same guarded Core used by the CLI.
-
-It does not get a weaker safety path.
+The MCP interface exposes the same guarded Core used by the CLI. It does not get a weaker safety path.
 
 ---
 
@@ -343,11 +344,7 @@ one mutation boundary
 verified source tree
 ```
 
-Threadmoth does not replace formatters, compilers, test runners or the model.
-
-Those tools can decide **what the desired result should be**.
-
-Threadmoth exists to make sure the authorised result is the result that actually lands.
+Threadmoth does not replace formatters, compilers, test runners or the model. Those tools can decide **what the desired result should be**. Threadmoth exists to make sure the authorised result is the result that actually lands.
 
 ---
 
@@ -364,13 +361,11 @@ a test runner
 a shell
 a Git client
 a build system
+a package manager
+a Terraform engine
 ```
 
-It does not invent code.
-
-It does not decide which ambiguous target you meant.
-
-It does not run arbitrary commands to determine whether an edit was successful.
+It does not invent code. It does not decide which ambiguous target you meant. It does not run arbitrary commands to determine whether an edit was successful.
 
 It does one job:
 
@@ -380,7 +375,9 @@ It does one job:
 
 ## Install
 
-Download the appropriate standalone binary from the **[Threadmoth v1.9.0 release](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.9.0)** and put `threadmoth` on your `PATH`.
+Download the appropriate standalone binary from the **[latest GitHub release](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/latest)** and put `threadmoth` on your `PATH`.
+
+The repository source is version **1.9.0**. The latest-release page is authoritative for which version and artifacts have actually been published; source can be ahead of the most recent release while release gates are still running.
 
 Check the installation:
 
@@ -397,20 +394,11 @@ threadmoth update --check
 threadmoth update
 ```
 
-The v1.9.0 release includes Windows x86-64, Linux x86-64, macOS Apple
-Silicon, and macOS x86-64 archives, each with shell completions, a man page,
-SHA-256 checksums, and a release manifest. Standalone self-update verifies
-the selected archive and executable version before replacing the current
-binary; package-managed installations are reported rather than overwritten.
+The 1.9 release pipeline supports portable Windows x86-64, Linux x86-64, macOS Apple Silicon and macOS x86-64 archives, with checksums and a release manifest. Windows and Linux also have explicit `-v3` modern artifacts built for the `x86-64-v3` CPU baseline. Portable remains the compatibility default.
 
-Portable archives are the compatibility default. Windows and Linux also have
-explicit `-v3` modern archives built with the x86-64-v3 baseline; use them only
-when the machine supports that baseline. Local `target-cpu=native` builds are
-available from the build scripts and are never treated as downloadable
-portable releases.
+Local maximum-performance builds can use `target-cpu=native` through the checked-in build scripts. Native builds are tuned to the machine that compiles them and are never presented as universal downloads. See [Performance builds](docs/performance-builds.md) and [Performance results](docs/performance-results.md).
 
-For common safe edits, these small commands compile into the same guarded Core
-pipeline as canonical requests:
+For common safe edits, these small commands compile into the same guarded Core pipeline as canonical requests:
 
 ```bash
 threadmoth replace-exact config.txt OLD NEW
@@ -419,26 +407,11 @@ threadmoth create-file notes.txt "managed file"
 threadmoth doctor --json
 ```
 
-Shorthands authorize one file, one target, and one changed region. They refuse
-ambiguity and stale state. When a refusal includes deterministic `recovery`
-remedies, `threadmoth suggest --from-refusal refusal.json` emits complete
-guarded next-request templates; the caller still chooses among candidates.
+Shorthands authorize one file, one target and one changed region. They refuse ambiguity and stale state. When a refusal includes deterministic `recovery` remedies, `threadmoth suggest --from-refusal refusal.json` emits complete guarded next-request templates; the caller still chooses among candidates.
 
-Before choosing an edit route, agents can inspect Threadmoth's coverage model
-with `threadmoth capabilities --for PATH --json` or `threadmoth inspect PATH
---json`. Files are classified as structured (JSON, JSONC, TOML, YAML, INI and
-dotenv), syntax-aware (including Java, C#, PHP and HCL), bounded regions
-(Markdown), exact text, or opaque/refused. JSX and TSX are syntax variants,
-not separate language claims. Unknown valid UTF-8 remains available through
-explicit exact mutation; binary and unsupported encodings do not silently
-fall back. See [the coverage guide](docs/coverage.md).
+Before choosing an edit route, agents can inspect Threadmoth's coverage model with `threadmoth capabilities --for PATH --json` or `threadmoth inspect PATH --json`. Files are classified as structured, syntax-aware, bounded regions, exact text, or opaque/refused. Unknown valid UTF-8 remains available through explicit exact mutation; binary and unsupported encodings do not silently fall back.
 
-The current protocol is 1.3.1 and remains compatible with 1.3.0, 1.2.0, and
-1.1.0 requests. Mutation, plan application, transaction, filesystem lifecycle,
-and recovery writes use a bounded cooperating-process workspace lock and refuse
-with `WORKSPACE_BUSY` rather than waiting indefinitely. Unrelated external
-writers remain covered by stale-state and landed-byte verification, but are not
-controlled by that lock.
+The current protocol is **1.3.1** and remains compatible with 1.3.0, 1.2.0 and 1.1.0 requests. Mutation, plan application, transaction, filesystem lifecycle and recovery writes use a bounded cooperating-process workspace lock and refuse with `WORKSPACE_BUSY` rather than waiting indefinitely. Unrelated external writers remain covered by stale-state and landed-byte verification, but are not controlled by that lock.
 
 Mutation operations remain local. The explicit update command is the only normal Threadmoth operation that needs network access.
 
