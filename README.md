@@ -12,7 +12,7 @@
 
 AI is good at deciding **what should change**.
 
-The dangerous part is the last step: actually changing the files.
+The dangerous part is what it has to do last: actually change the files.
 
 Coding agents routinely fall back to direct writes, regex replacement, patch tools, shell commands and one-off scripts. Each has different behaviour around ambiguity, stale files, formatting, path safety and failure. An agent can make the right decision and still land the wrong edit.
 
