@@ -8,11 +8,11 @@ Date: 2026-09-09
 Repository: [matthewjameswatkins1978-cyber/Threadmoth](https://github.com/matthewjameswatkins1978-cyber/Threadmoth)  
 Current source line on `main`: **Threadmoth 1.9.0**  
 Current `main` merge for the 1.9 coverage/performance foundation: `946e7da0d59cc81fc4cacdfa6e821bb9812d391d`  
-Stable published release: [Threadmoth 1.8.1](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.8.1)
+Stable published release: [Threadmoth 1.9.0](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.9.0)
 
-Threadmoth 1.9 source is merged to `main`, but **v1.9.0 has not yet been tagged or published** at this snapshot. The published release page therefore correctly still shows 1.8.1.
+Threadmoth 1.9 is merged to `main` at `9769cc3708280f02c292a976e22476a732e5644e` and **v1.9.0 is tagged and published**. The [release workflow](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/actions/runs/34341046676) completed the source, six-platform/flavour build, package, runtime and publish jobs successfully.
 
-The full compiler optimization matrix and separate PGO training/validation are follow-up performance work, not blockers for publishing the portable and modern 1.9.0 artifacts. Hard publication gates are the protected `main` checks, the release workflow's cross-platform build/package/runtime checks, complete checksum/manifest generation, and the published-release updater exercise. Until those hard gates are complete, do not describe v1.9.0 as a published release.
+The full compiler optimization matrix and separate PGO training/validation remain follow-up performance work; PGO was not shipped. The published release has complete per-archive SHA-256 checksums and a release manifest, and an isolated v1.8.1 Windows installation successfully discovered and updated to v1.9.0 with manifest/checksum verification.
 
 The repository slug is `/Threadmoth`; the old `/Suture` URL may redirect but is not the canonical identity.
 
@@ -33,15 +33,17 @@ The release remains correctness-gated. Local 1.9 performance smoke evidence reco
 
 ## Current published artifacts
 
-The latest published release at this snapshot remains 1.8.1, with release artifacts for:
+The latest published release at this snapshot is 1.9.0, with release artifacts for:
 
 - Windows x86-64;
+- Windows x86-64-v3;
 - Linux x86-64;
+- Linux x86-64-v3;
 - macOS Apple Silicon;
 - macOS x86-64;
 - release manifest and per-platform checksum assets.
 
-The 1.9 release workflow is prepared to add explicit Windows/Linux `x86-64-v3` modern artifacts alongside portable builds once v1.9.0 is actually released.
+Portable remains the compatibility default; the Windows/Linux `x86-64-v3` artifacts are explicitly labelled modern builds.
 
 ## Shipped repository integrations
 
@@ -87,7 +89,7 @@ The following entries are operational history. Their state should not be interpr
 
 | Target | Fit | Gate |
 |---|---|---|
-| Threadmoth v1.9.0 GitHub release | Highest | Complete updater/runtime acceptance, then tag/publish from verified `main`; PGO remains follow-up work |
+| Threadmoth v1.9.0 GitHub release | Highest | Published and verified; PGO remains follow-up work |
 | Claude Code official directory | High | Authenticated submission plus live integration validation |
 | Gemini CLI gallery | High | Manifest review and live install validation before gallery submission |
 | skills.sh | High | Public skill can be installed by users; do not infer telemetry before observed use |
