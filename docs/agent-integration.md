@@ -110,7 +110,7 @@ threadmoth_exact_replace
 threadmoth_set_value
 ```
 
-`threadmoth_set_value` follows the same typed provider path as the CLI shorthand for supported JSON, JSONC, TOML, YAML and INI targets. There is deliberately no `threadmoth_update`; self-update is an explicit CLI-only maintenance command.
+`threadmoth_set_value` follows the same Target Registry and shared value-operation resolver as the CLI shorthand for JSON, JSONC, TOML, YAML, INI and dotenv targets. Special filenames such as `setup.cfg` and `.env.local` therefore resolve consistently. MCP sends native JSON values, so `true` is a boolean and `"true"` is a string; it does not need a CLI-style `--string` flag. There is deliberately no `threadmoth_update`; self-update is an explicit CLI-only maintenance command.
 
 ## The 30-second agent loop
 

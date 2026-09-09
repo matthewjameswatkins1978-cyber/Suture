@@ -1,6 +1,6 @@
 # Threadmoth CLI
 
-Threadmoth 1.9.0 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
+Threadmoth 1.9.1 uses one structured command grammar for parsing, help, validation, completion, and manpage generation.
 
 ## Discover before editing
 
@@ -115,7 +115,7 @@ The summary shows outcome, provider, effect size, preservation facts, hashes and
 }
 ```
 
-Threadmoth 1.9.0 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
+Threadmoth 1.9.1 continues to accept the older request spelling `"provider":"file"` as a compatibility alias. When serialized or described by Threadmoth, the provider is canonicalized to `filesystem`.
 
 ## Safe shorthands
 
@@ -123,11 +123,12 @@ Common safe shorthands compile into ordinary typed requests and use the same gua
 
 ```text
 threadmoth replace-exact FILE OLD NEW
-threadmoth set-value FILE PATH JSON_VALUE
+threadmoth set-value FILE PATH JSON_VALUE [--string]
+threadmoth set-string FILE PATH STRING_VALUE
 threadmoth create-file FILE CONTENT
 ```
 
-`set-value` supports the structured formats implemented by the shorthand path: JSON, JSONC, TOML, YAML/YML and INI. INI values are supplied as JSON strings.
+`set-value` supports registry-selected JSON, JSONC, TOML, YAML/YML, INI and dotenv targets, including registered special filenames such as `setup.cfg`, `tox.ini`, `pytest.ini`, `.editorconfig` and `.env.*`. Values are strict JSON by default. `--string` treats the argument as a literal UTF-8 string without type inference; `set-string` is a convenience alias for the same operation. Invalid JSON remains a refusal.
 
 Each shorthand uses conservative one-file/one-target/one-region budgets and still refuses ambiguity, stale state, unsupported structure or an effect outside its authorization.
 
@@ -150,7 +151,7 @@ threadmoth_exact_replace
 threadmoth_set_value
 ```
 
-Preview runs the guarded planning/certification pipeline with commit disabled. `threadmoth_set_value` supports the same JSON, JSONC, TOML, YAML/YML and INI structured path as the shorthand implementation. Self-update remains CLI-only.
+Preview runs the guarded planning/certification pipeline with commit disabled. `threadmoth_set_value` uses the same Target Registry and shared value-operation resolver as the CLI shorthand, with native JSON values distinguishing strings, booleans and numbers. Self-update remains CLI-only.
 
 JSON-RPC notifications, including `notifications/initialized`, are consumed without a response; ordinary requests receive a JSON-RPC result or standard error response.
 
@@ -255,7 +256,7 @@ threadmoth doctor --json
 
 ## Compatibility policy
 
-Threadmoth 1.9.0 keeps important pre-1.3 command/provider spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and request provider alias `file`. It accepts protocol 1.1.0, 1.2.0 and 1.3.0 requests with their promised semantics while advertising protocol 1.3.1 as current.
+Threadmoth 1.9.1 keeps important pre-1.3 command/provider spellings as compatibility routes, including `apply`, `dry-run`, positional benchmark profiles, `torture`, `transaction-preview`, and request provider alias `file`. It accepts protocol 1.1.0, 1.2.0 and 1.3.0 requests with their promised semantics while advertising protocol 1.3.1 as current.
 
 ## Plan review
 

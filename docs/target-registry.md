@@ -1,6 +1,6 @@
 # Target registry
 
-`src/target_registry.rs` is the canonical user-facing discovery registry in Threadmoth 1.9. It owns the metadata needed to answer a simple question before mutation:
+`src/target_registry.rs` is the canonical classification authority in Threadmoth 1.9.1. Runtime discovery, inspect, capabilities, suggest, CLI shorthand provider selection and MCP shorthand provider selection all use it to answer a simple question before mutation:
 
 > What does Threadmoth know about this file, and what level of mutation can it safely offer?
 
@@ -17,6 +17,13 @@ Each registered target can describe:
 - whether explicit weaker fallback routes are available.
 
 Capability, inspect and suggest surfaces derive path classification from this same registry. The Tree-sitter grammar table supplies parser implementations for syntax targets but is not a second user-facing language list.
+
+The shared shorthand resolver consumes the registry result and only then checks
+whether the requested value operation is available for that provider. It does
+not maintain a second extension or filename table. Consequently, `setup.cfg`,
+`tox.ini` and `.editorconfig` resolve to the INI provider, `.env.local` resolves
+to dotenv, and conventional extensions resolve in exactly the same way across
+CLI and MCP.
 
 ## Categories
 

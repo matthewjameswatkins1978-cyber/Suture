@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.9.1 - Consistency and hardening
+
+Threadmoth 1.9.1 makes the Target Registry authoritative for shorthand target
+resolution and adds explicit string-value ergonomics without weakening strict
+JSON value handling.
+
+### Fixed
+
+- Fixed registered INI-family filenames including `setup.cfg`, `tox.ini`,
+  `pytest.ini` and `.editorconfig` being rejected by extension-only shorthand
+  detection.
+- Fixed `.env` filename families being rejected by shorthand provider
+  detection.
+- Aligned CLI and MCP value-setting resolution through one shared registry
+  resolver.
+
+### Added
+
+- Added `set-value --string` and the `set-string` convenience shorthand for
+  explicit UTF-8 string values.
+- Added regression coverage for special filenames, value typing, refusal
+  safety and CLI/MCP parity.
+
+### Safety
+
+- `set-value` remains strict JSON by default and malformed values still refuse;
+  invalid JSON is never silently coerced into a string.
+- No semantic codemods or plans/proof work were added; those remain future
+  scope.
+
 ## 1.9.0 - Coverage and performance foundations
 
 Threadmoth 1.9.0 makes the coverage model explicit without expanding into compiler, formatter, package-manager or infrastructure semantics.

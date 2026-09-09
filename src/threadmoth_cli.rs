@@ -24,7 +24,8 @@ use threadmoth::{
 use cli::{
     ApplyPlanArgs, BenchmarkArgs, BenchmarkProfile, CapabilitiesArgs, Cli, Command,
     CompletionShell, CreateFileArgs, DoctorArgs, ExplainFormat, HelpArgs, PlanArgs, RecoverArgs,
-    ReplaceExactArgs, SchemaArgs, SetValueArgs, SuggestArgs, UpdateArgs, THREADMOTH_VERSION,
+    ReplaceExactArgs, SchemaArgs, SetStringArgs, SetValueArgs, SuggestArgs, UpdateArgs,
+    THREADMOTH_VERSION,
 };
 
 fn main() {
@@ -32,6 +33,7 @@ fn main() {
     match cli.command {
         Command::ReplaceExact(args) => run_replace_exact(args),
         Command::SetValue(args) => run_set_value(args),
+        Command::SetString(args) => run_set_string(args),
         Command::CreateFile(args) => run_create_file(args),
         Command::Mutate(args) => run_request(args.request.as_deref(), false, args.summary),
         Command::Preview(args) => run_request(args.request.as_deref(), true, args.summary),
@@ -92,7 +94,7 @@ fn shorthand_request(
             max_matches: Some(1),
             max_changed_regions: Some(1),
             max_changed_lines: None,
-            max_changed_bytes: Some(bytes),
+            max_changed_bytes: Some(bytes.saturating_add(64).max(1)),
             allowed_path_prefixes: Vec::new(),
         },
         operation,
@@ -125,69 +127,45 @@ fn run_replace_exact(args: ReplaceExactArgs) {
 }
 
 fn run_set_value(args: SetValueArgs) {
-    let value: serde_json::Value = match serde_json::from_str(&args.value) {
-        Ok(value) => value,
+    let value = if args.string {
+        serde_json::Value::String(args.value.clone())
+    } else {
+        match serde_json::from_str(&args.value) {
+            Ok(value) => value,
+            Err(error) => {
+                let mut certificate = empty_cert(RefusalReason::MalformedInput {
+                    details: format!("set-value expects a JSON value: {error}"),
+                });
+                certificate.schema_diagnostic =
+                    Some(threadmoth::protocol::schema_diagnostic(&error.to_string()));
+                emit_certificate(&certificate, false, false);
+                std::process::exit(2);
+            }
+        }
+    };
+    let operation = match threadmoth::shorthand::set_value_operation(
+        &args.file.to_string_lossy(),
+        &args.path,
+        value,
+    ) {
+        Ok(operation) => operation,
         Err(error) => {
-            let mut certificate = empty_cert(RefusalReason::MalformedInput {
-                details: format!("set-value expects a JSON value: {error}"),
-            });
-            certificate.schema_diagnostic =
-                Some(threadmoth::protocol::schema_diagnostic(&error.to_string()));
-            emit_certificate(&certificate, false, false);
+            eprintln!("set-value refused: {error}");
             std::process::exit(2);
         }
     };
-    let extension = args
-        .file
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let operation = match extension.as_str() {
-        "json" => threadmoth::protocol::OperationPayload::Json(
-            threadmoth::provider::json::JsonOperation::Set {
-                path: args.path,
-                value,
-            },
-        ),
-        "jsonc" => threadmoth::protocol::OperationPayload::Jsonc(
-            threadmoth::provider::json::JsonOperation::Set {
-                path: args.path,
-                value,
-            },
-        ),
-        "yaml" | "yml" => threadmoth::protocol::OperationPayload::Yaml(
-            threadmoth::provider::yaml::YamlOperation::Set {
-                path: args.path,
-                value,
-            },
-        ),
-        "toml" => match serde_json::from_value(value) {
-            Ok(value) => threadmoth::protocol::OperationPayload::Toml(
-                threadmoth::provider::toml::TomlOperation::Set {
-                    path: args.path,
-                    value,
-                },
-            ),
-            Err(error) => {
-                eprintln!("set-value refused: TOML value is not representable: {error}");
-                std::process::exit(2);
-            }
-        },
-        "ini" => match value {
-            serde_json::Value::String(value) => threadmoth::protocol::OperationPayload::Ini(
-                threadmoth::provider::ini::IniOperation::Set {
-                    path: args.path,
-                    value,
-                },
-            ),
-            _ => {
-                eprintln!("set-value refused: INI values must be JSON strings");
-                std::process::exit(2);
-            }
-        },
-        _ => {
-            eprintln!("set-value refused: use a .json, .jsonc, .toml, .yaml, .yml, or .ini file");
+    run_shorthand(shorthand_request(&args.file, operation, args.value.len()));
+}
+
+fn run_set_string(args: SetStringArgs) {
+    let operation = match threadmoth::shorthand::set_value_operation(
+        &args.file.to_string_lossy(),
+        &args.path,
+        serde_json::Value::String(args.value.clone()),
+    ) {
+        Ok(operation) => operation,
+        Err(error) => {
+            eprintln!("set-string refused: {error}");
             std::process::exit(2);
         }
     };

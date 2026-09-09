@@ -7,7 +7,7 @@ compatibility: >-
   Works with any agent that can read files and run local commands.
 metadata:
   author: matthewjameswatkins1978-cyber
-  version: "1.9.0"
+  version: "1.9.1"
 ---
 
 # Threadmoth
@@ -48,7 +48,7 @@ threadmoth schema
 threadmoth examples
 ```
 
-Threadmoth 1.9 discovery classifies targets as `structured`, `syntax`, `region`, `exact` or `opaque` and reports preservation level plus explicit fallback routes.
+Threadmoth 1.9.1 discovery classifies targets as `structured`, `syntax`, `region`, `exact` or `opaque` and reports preservation level plus explicit fallback routes. The Target Registry is also authoritative for CLI and MCP shorthand provider selection, including special filenames such as `setup.cfg` and `.env.local`.
 
 Use the canonical `threadmoth` executable. `thm` may exist as a convenience alias, but it is not the compatibility contract. Do not assume a `.thm` source extension.
 
@@ -73,6 +73,11 @@ For an ordinary text replacement, the current request shape is:
 ```
 
 Older supported protocol versions remain valid where the installed runtime advertises them. Prefer runtime `schema`/`examples` over hard-coding assumptions.
+
+For a structured scalar value, send JSON with its intended type. The CLI
+`set-value` command parses values strictly as JSON; use `set-value ... --string`
+or `set-string ...` for a literal UTF-8 string. MCP callers send native JSON
+values directly. Invalid JSON is refused rather than silently coerced.
 
 ## Preview, then mutate
 

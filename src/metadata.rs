@@ -1898,9 +1898,12 @@ fn template_for(
 }
 
 fn language_for_path(path: &str) -> String {
-    syntax::suggest_extension(path)
-        .map(str::to_owned)
-        .unwrap_or_else(|| "javascript".into())
+    let detection = target_registry::detect(path, None);
+    if matches!(detection.provider.as_deref(), Some("code" | "web")) {
+        detection.target_kind
+    } else {
+        "javascript".into()
+    }
 }
 
 pub fn refusal_recovery(certificate: &crate::protocol::Certificate) -> Value {

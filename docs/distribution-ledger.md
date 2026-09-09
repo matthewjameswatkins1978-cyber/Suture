@@ -6,13 +6,13 @@ This is the durable record for Threadmoth discovery and distribution work. It re
 
 Date: 2026-09-09  
 Repository: [matthewjameswatkins1978-cyber/Threadmoth](https://github.com/matthewjameswatkins1978-cyber/Threadmoth)  
-Current source line on `main`: **Threadmoth 1.9.0**  
+Current source line on `main`: **Threadmoth 1.9.1**
 Current `main` merge for the 1.9 coverage/performance foundation: `946e7da0d59cc81fc4cacdfa6e821bb9812d391d`  
 Stable published release: [Threadmoth 1.9.0](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/releases/tag/v1.9.0)
 
 Threadmoth 1.9 is merged to `main` at `9769cc3708280f02c292a976e22476a732e5644e` and **v1.9.0 is tagged and published**. The [release workflow](https://github.com/matthewjameswatkins1978-cyber/Threadmoth/actions/runs/34341046676) completed the source, six-platform/flavour build, package, runtime and publish jobs successfully.
 
-The full compiler optimization matrix and separate PGO training/validation remain follow-up performance work; PGO was not shipped. The published release has complete per-archive SHA-256 checksums and a release manifest, and an isolated v1.8.1 Windows installation successfully discovered and updated to v1.9.0 with manifest/checksum verification.
+The full compiler optimization matrix and separate PGO training/validation remain follow-up performance work; PGO was not shipped. The published 1.9.0 release has complete per-archive SHA-256 checksums and a release manifest, and an isolated v1.8.1 Windows installation successfully discovered and updated to v1.9.0 with manifest/checksum verification. v1.9.1 is the current source line while its release is being prepared.
 
 The repository slug is `/Threadmoth`; the old `/Suture` URL may redirect but is not the canonical identity.
 
