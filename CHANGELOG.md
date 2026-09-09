@@ -2,11 +2,29 @@
 
 ## 1.9.0 - Coverage and performance foundations
 
-Threadmoth 1.9.0 adds a canonical coverage registry, Java/C#/PHP/HCL syntax
-grammar admission, source-preserving nested YAML targeting, conservative INI
-targeting, structured discovery metadata, and explicit portable/modern/native
-build tooling. Advanced YAML constructs remain fail-closed and PGO remains an
-experiment until measured evidence justifies release adoption.
+Threadmoth 1.9.0 makes the coverage model explicit without expanding into compiler, formatter, package-manager or infrastructure semantics.
+
+### Added
+
+- Canonical target registry for deterministic file classification, aliases, extensions, exact filenames, provider ownership and fallback metadata.
+- AI-facing `structured`, `syntax`, `region`, `exact` and `opaque` understanding levels plus preservation metadata and path-scoped discovery.
+- Tree-sitter syntax targeting for Java, C#, PHP and HCL / Terraform syntax through the existing parser-locates/Core-mutates boundary.
+- Source-preserving nested YAML path targeting for mappings and sequence indexes, with conservative fail-closed handling of advanced constructs.
+- Conservative INI-style section/key provider, including registered filenames such as `setup.cfg`, `tox.ini`, `pytest.ini` and `.editorconfig`.
+- Explicit portable, `x86-64-v3` modern and local `target-cpu=native` build flavours, build metadata and helper scripts.
+- Named `maxperf` Cargo profile for measured release optimization experiments.
+- Release/updater flavour selection and modern Windows/Linux artifact wiring.
+- Coverage, target-registry and performance documentation plus current local build-flavour evidence.
+
+### Deliberately deferred / bounded
+
+- Kotlin, Swift and GNU Make syntax remain deferred until parser/integration quality clears the admission bar.
+- Dockerfile, Makefile and Java `.properties` remain explicit exact-text targets rather than overstated structural support.
+- HCL support does not include Terraform resource/provider/state semantics.
+- Advanced YAML constructs remain refusal boundaries where local preservation cannot be proved.
+- The full compiler optimization matrix, separate PGO training/validation and published-release updater exercise remain release-performance gates until completed.
+
+The correctness requirement remains unchanged: **wrong successful mutations must remain zero**.
 
 ## 1.8.1 - Completion and hardening
 

@@ -1,31 +1,24 @@
 # Threadmoth 1.0 acceptance boundary
 
-The 1.0 mutation runtime is extended by the 1.1 self-teaching discovery
-surface. `threadmoth help`, `examples`, `schema`, `explain`, `capabilities`, and
-`suggest` are generated from the canonical runtime metadata registry.
+> **Historical design record.** This document describes the 1.0/early-1.1 acceptance boundary. It is intentionally retained for compatibility history, not as the current capability list. For Threadmoth 1.9 use [Coverage](coverage.md), [Protocol](protocol.md), and `threadmoth capabilities --json --all`.
 
-Threadmoth 1.0 keeps one mutation authority: providers propose byte edits and Core alone validates, budgets, commits, verifies, and certifies them.
+At the 1.0 milestone, Threadmoth kept one mutation authority: providers proposed byte edits and Core alone validated, budgeted, committed, verified and certified them.
 
-The v1.0 release protocol was `1.0.0`; the current self-teaching protocol is
-`1.1.0`. The normal one-file surface is `threadmoth mutate` (or `threadmoth preview`);
-`threadmoth capabilities` describes the exact runtime surface. `threadmoth transact`
-prepares all content candidates before writing, journals them before commit,
-and reports `transactional_with_rollback` when rollback is available.
-`threadmoth recover` never silently ignores an interrupted journal.
+The v1.0 release protocol was `1.0.0`; the self-teaching discovery work introduced protocol `1.1.0`. Later releases retained compatible request handling while extending the protocol. The current 1.9 protocol is documented separately.
 
-Built-in providers are explicit and never fall back to one another:
+The early built-in provider boundary included:
 
-- text: exact byte targets, cardinality, move, and idempotent desired-state operations;
-- strict JSON and JSONC: source-range JSON Pointer edits, with JSONC comments/trailing commas masked without changing offsets;
+- text: exact byte targets, cardinality, move and idempotent desired-state operations;
+- strict JSON and JSONC: source-range structured edits;
 - TOML: `toml_edit` candidate narrowed to the changed span, refusing fidelity drift;
-- YAML: parsed and source-preserving for conservative local key/value edits, including inline scalar/sequence/mapping values; anchors, aliases, block scalars, and unsupported structure refuse rather than reserialize the document;
-- Markdown: bounded heading sections;
-- dotenv: guarded key/value edits preserving comments and unrelated lines;
-- pattern: bounded Rust regex matching, explicit cardinality, and no callbacks;
-- patch: exact unified-diff preimages and hunk counts, never fuzzy relocation;
-- code: Tree-sitter syntax validation and exact node text/kind targeting for JavaScript/TypeScript/JSX/TSX, Python, Rust, and Go;
-- filesystem: guarded create, delete, rename, and move operations.
+- conservative YAML local edits with fail-closed unsupported structure;
+- Markdown bounded heading regions;
+- dotenv guarded key/value edits;
+- pattern bounded Rust regex matching;
+- patch exact unified-diff preimages, never fuzzy relocation;
+- initial Tree-sitter code targeting;
+- guarded filesystem create/delete/rename/move.
 
-The certificate includes request identity, provider identity, pre/post hashes, changed byte and line ranges, bounded diff, structural validation, newline/BOM facts, effect-budget usage, commit guarantee, and recovery state. Generated-file markers, binary input, unknown encodings, stale identities, duplicate targets, path escape, and unsupported preservation are fail-closed refusals.
+The certificate model already carried request/provider identity, pre/post hashes, changed byte and line ranges, bounded diff, structural validation, newline/BOM facts, effect-budget usage, commit guarantee and recovery state.
 
-Git, builds, tests, formatters, linters, package managers, arbitrary subprocesses, network access, LSP semantics, and general workflow control remain outside Threadmoth.
+The core scope rule remains current even though the provider list has grown: Git, builds, tests, formatters, linters, package managers, arbitrary subprocesses, general network work, LSP/type semantics and workflow control are outside Threadmoth's mutation remit.

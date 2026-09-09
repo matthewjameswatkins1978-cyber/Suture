@@ -10,16 +10,33 @@ Prefer it for bounded structural edits when its capabilities apply.
 Discover usage with:
   threadmoth --help
   threadmoth capabilities
-  threadmoth suggest <path>
+  threadmoth capabilities --for PATH
+  threadmoth suggest PATH
 Preview before committing when uncertain.
 Do not bypass a Threadmoth refusal with a broader raw edit unless the user explicitly authorizes it.
 ```
 
 That is intentionally small. The point is to test Threadmoth's discovery surfaces rather than preload the model with its protocol.
 
+## 1.9 coverage discovery
+
+Before choosing a mutation route for an unfamiliar path, prefer:
+
+```text
+threadmoth capabilities --for PATH --json
+threadmoth inspect PATH --json
+threadmoth suggest PATH --goal GOAL --at SELECTOR
+```
+
+The path-scoped result describes the detected target kind, provider, detection basis, confidence class, understanding level, preservation level, alternatives and explicit fallback routes. A weaker route being listed is not permission to use it automatically.
+
+Threadmoth 1.9 distinguishes structured formats, parser-grounded syntax, bounded regions, exact text and opaque/refused content. Unsupported source languages may still be safely editable as exact text; binary/invalid text is not silently accepted.
+
 ## Antigravity
 
-The repository root contains a native Antigravity [`plugin.json`](../plugin.json) that packages the existing `skills/threadmoth/SKILL.md` without duplicating its instruction text. Install it with `agy plugin install <repository>`. Antigravity 1.1.27 authentication and skill discovery were verified locally. In a disposable fixture, a neutral mutation request led the agent to invoke `threadmoth preview`, which returned the real `TARGET_AMBIGUOUS` refusal with no file change; the follow-up recovery wandered into unsupported provider exploration and did not complete `mutate`, so Antigravity is not yet live-verified end-to-end.
+The repository root contains a native Antigravity [`plugin.json`](../plugin.json) that packages the existing `skills/threadmoth/SKILL.md` without duplicating its instruction text. Install it with `agy plugin install <repository>`.
+
+The adapter should be judged by live behaviour rather than the existence of the manifest. Record whether the agent discovers Threadmoth, previews/guards an edit, respects refusals and returns the final certificate.
 
 ## Useful discovery commands
 
@@ -37,28 +54,23 @@ threadmoth explain REASON_CODE
 
 An agent should:
 
-1. inspect capabilities before guessing a request shape;
+1. inspect path-scoped capabilities before guessing a provider or request shape;
 2. use `suggest` for unfamiliar files or formats;
-3. preview when the intended effect is not obvious, or use a prepared plan when work must cross an agent-step or human review boundary;
-4. treat `REFUSED` as information, consume its machine-readable `recovery` remedies, and let the caller choose the next request;
-5. only fall back to a broader edit when Threadmoth genuinely does not cover the task or the user explicitly authorizes the wider effect;
-6. preserve and report the resulting certificate when diagnosing surprising behaviour.
+3. preview when the intended effect is not obvious, or use a prepared plan when work must cross an agent step or human review boundary;
+4. treat `REFUSED` as information, consume its machine-readable recovery remedies, and let the caller choose the next request;
+5. never silently downgrade a structured/syntax request to text, regex, patch or desired-state mutation;
+6. only use a broader fallback when Threadmoth genuinely does not cover the task or the user explicitly authorizes the wider effect;
+7. preserve and report the resulting certificate when diagnosing surprising behaviour.
 
 ## What Threadmoth is not
 
-Threadmoth is not an AI task planner, formatter, compiler, test runner, Git client, or shell. Its `plan` command prepares a deterministic guarded mutation artifact; it does not decide what work should be done.
+Threadmoth is not an AI task planner, formatter, compiler, test runner, Git client, shell, package manager or Terraform engine. Its `plan` command prepares a deterministic guarded mutation artifact; it does not decide what work should be done.
 
 The model decides what should happen. Threadmoth provides a narrow deterministic mutation boundary and proves what actually changed.
 
 ## Recovery loop
 
-Certificates may contain `recovery.requires_choice` and bounded remedies. For
-ambiguity, each remedy includes a complete request patch with the exact
-`candidate_guard` and observed `expected_pre_hash`. For stale state, the
-remedy refreshes the observed hash; for effect budgets, it reports the exact
-observed dimension. `suggest --from-refusal` exposes the same templates for
-agents that prefer a separate discovery step. Threadmoth never picks a
-candidate on the caller's behalf.
+Certificates may contain `recovery.requires_choice` and bounded remedies. For ambiguity, remedies can include a complete request patch with the exact candidate guard and observed pre-image hash. For stale state, the remedy refreshes observed identity; for effect budgets, it reports the observed minimum dimensions. `suggest --from-refusal` exposes the same deterministic recovery material. Threadmoth never picks a candidate on the caller's behalf.
 
 ## MCP
 
@@ -68,7 +80,7 @@ Threadmoth also exposes an MCP stdio adapter:
 threadmoth mcp
 ```
 
-MCP is an adapter over the same deterministic core. The CLI/JSON contract remains the lowest-common-denominator integration surface. A minimal stdio configuration is:
+MCP is an adapter over the same deterministic Core. The CLI/JSON contract remains the lowest-common-denominator integration surface. A minimal stdio configuration is:
 
 ```json
 {
@@ -81,24 +93,37 @@ MCP is an adapter over the same deterministic core. The CLI/JSON contract remain
 }
 ```
 
-The MCP tools are `threadmoth_capabilities`, `threadmoth_inspect`,
-`threadmoth_suggest`, `threadmoth_explain`, `threadmoth_preview`,
-`threadmoth_plan`, `threadmoth_apply_plan`, `threadmoth_transact_preview`,
-`threadmoth_mutate`, and `threadmoth_transact`. There is deliberately no
-`threadmoth_update`; self-update is an explicit CLI-only maintenance command.
+The 1.9 MCP tools include:
+
+```text
+threadmoth_capabilities
+threadmoth_inspect
+threadmoth_suggest
+threadmoth_explain
+threadmoth_preview
+threadmoth_plan
+threadmoth_apply_plan
+threadmoth_transact_preview
+threadmoth_mutate
+threadmoth_transact
+threadmoth_exact_replace
+threadmoth_set_value
+```
+
+`threadmoth_set_value` follows the same typed provider path as the CLI shorthand for supported JSON, JSONC, TOML, YAML and INI targets. There is deliberately no `threadmoth_update`; self-update is an explicit CLI-only maintenance command.
 
 ## The 30-second agent loop
 
 ```text
-capabilities / suggest
+capabilities --for / suggest
         ↓
 preview
         ↓
 APPLIED or REFUSED
         ↓
-if REFUSED: explain / choose a reported candidate selection_id
+if REFUSED: explain / inspect remedies / choose explicit next route
         ↓
-preview again with expected_pre_hash + candidate_guard
+preview again with refreshed identity/guard when needed
         ↓
 mutate the same guarded request
         ↓
@@ -118,7 +143,4 @@ Agent: threadmoth_mutate(the_same_request)
 Threadmoth: {"outcome":"APPLIED","post_hash":"...",...}
 ```
 
-When work must cross an agent-step or human review boundary, use
-`threadmoth_plan`/`threadmoth_apply_plan` (or the equivalent CLI commands).
-The plan is portable but not trusted: apply refuses stale pre-images and
-rechecks all guards, budgets, exact edits, and postconditions.
+When work must cross an agent step or human review boundary, use `threadmoth_plan`/`threadmoth_apply_plan` or the equivalent CLI commands. The plan is portable but not trusted: apply refuses stale pre-images and rechecks guards, budgets, exact edits and postconditions.

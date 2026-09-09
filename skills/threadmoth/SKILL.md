@@ -1,6 +1,6 @@
 ---
 name: threadmoth
-description: Use Threadmoth when an AI coding task needs a precise, bounded mutation of JSON, JSONC, TOML, YAML, Markdown, dotenv, pattern, source-code, patch, or text files; guarded file lifecycle operations such as create/delete/rename/move; preservation of unrelated bytes; a named section or syntax node; repeated or ambiguous match handling; stale-file guards; effect budgets; or a machine-readable certificate. Prefer it when an unconstrained write could cause collateral edits. Do not use it for read-only inspection, Git, builds, tests, formatting-only rewrites, bulk generation, or unsupported file shapes.
+description: Use Threadmoth when an AI coding task needs a precise, bounded mutation of JSON, JSONC, TOML, YAML, INI, Markdown, dotenv, pattern, source-code/web syntax, patch, desired-state, or exact text files; guarded file lifecycle operations such as create/delete/rename/move; preservation of unrelated bytes; named sections or syntax nodes; repeated/ambiguous match handling; stale-file guards; effect budgets; or a machine-readable certificate. Prefer it when an unconstrained write could cause collateral edits. Do not use it for Git, builds, tests, formatter execution, package-manager semantics, Terraform semantics, bulk generation, or unsupported opaque file shapes.
 license: MIT
 compatibility: >-
   Requires the Threadmoth executable on PATH (canonical command: threadmoth).
@@ -12,31 +12,26 @@ metadata:
 
 # Threadmoth
 
-Threadmoth is a narrow mutation boundary for workspace files. It observes the
-file or guarded lifecycle target, identifies the intended effect, guards the
-request, prepares an exact candidate, verifies prospective and committed state,
-and returns a certificate. It is not a general shell, formatter, compiler, test
-runner, Git client, or network tool. The explicit `threadmoth update`
-maintenance command is a separate CLI-only exception.
+Threadmoth is a narrow mutation boundary for workspace files. It observes the file or guarded lifecycle target, identifies the intended effect, guards the request, prepares an exact candidate, verifies prospective and committed state, and returns a certificate.
+
+It is not a general shell, formatter, compiler, test runner, Git client, package manager, Terraform engine or network tool. The explicit `threadmoth update` maintenance command is a separate CLI-only exception.
 
 ## Decide whether to use it
 
-Use Threadmoth when the task changes an existing supported file, or performs a
-guarded create/delete/rename/move operation on a workspace path, and the exact
-scope matters. It is especially useful when:
+Use Threadmoth when the task changes an existing file through a discovered structured/syntax/region/exact route, or performs a guarded create/delete/rename/move operation on a workspace path and exact scope matters.
 
-- a named section, JSON path, syntax node, or exact text occurrence is the target;
+It is especially useful when:
+
+- a named section, structured path, syntax node or exact text occurrence is the target;
 - a file lifecycle operation must be confined and explicitly guarded;
 - repeated matches must be refused instead of guessed;
-- an expected pre-image, path boundary, or effect budget should be enforced;
+- an expected pre-image, candidate identity, path boundary or effect budget should be enforced;
 - the caller needs proof of the observed and committed bytes; or
-- preserving encoding, line endings, comments, and unrelated bytes matters.
+- preserving line endings, comments and unrelated bytes matters.
 
-Do not route a task through Threadmoth merely because it can write a file. Use
-the specialist tool when the task is formatting, compilation, testing, Git, or
-bulk generation. If the file shape or requested operation is not covered by its
-discovered capabilities, say so and use an appropriate fallback only when the
-user authorizes it or the task plainly requires it.
+Do not route a task through Threadmoth merely because it can write a file. Use specialist tooling when the task itself is compilation, testing, Git, package management, formatting or semantic infrastructure planning.
+
+If a requested structured/syntax provider refuses, do not silently convert the operation into text, regex, patch or desired-state mutation. A weaker fallback must be explicit.
 
 ## Discover locally
 
@@ -44,33 +39,32 @@ Before relying on a capability, query the installed runtime:
 
 ```text
 threadmoth --version
-threadmoth doctor
+threadmoth doctor --json
 threadmoth capabilities
+threadmoth capabilities --for PATH --json
+threadmoth inspect PATH --json
 threadmoth suggest PATH
 threadmoth schema
 threadmoth examples
 ```
 
-Use the canonical `threadmoth` executable. `thm` may exist as a convenience
-alias, but it is not the compatibility contract. Do not assume a `.thm` source
-extension.
+Threadmoth 1.9 discovery classifies targets as `structured`, `syntax`, `region`, `exact` or `opaque` and reports preservation level plus explicit fallback routes.
+
+Use the canonical `threadmoth` executable. `thm` may exist as a convenience alias, but it is not the compatibility contract. Do not assume a `.thm` source extension.
 
 ## Make a bounded request
 
-Construct a request with a workspace-relative `file_path`, stable `request_id`,
-the required protocol version, an explicit operation/provider, and a
-cardinality. Add `expected_pre_hash`, a narrow region guard, and a hard effect
-`budget` when they are known. Prefer an exact path or named target over a broad
-replacement. Read the local schema and examples instead of inventing fields.
+Construct a request with a workspace-relative `file_path`, stable `request_id`, a supported protocol version, explicit provider/operation and cardinality. Add `expected_pre_hash`, a narrow region/candidate guard and hard effect budget when they are known. Prefer an exact path or named target over a broad replacement. Read the local schema and examples instead of inventing fields.
 
-For an ordinary text replacement, the shape is:
+For an ordinary text replacement, the current request shape is:
 
 ```json
 {
-  "version": "1.1.0",
+  "version": "1.3.1",
   "request_id": "change-unique-id",
   "file_path": "config.txt",
   "cardinality": { "type": "exactly_one" },
+  "budget": { "max_files": 1, "max_matches": 1 },
   "operation": {
     "provider": "text",
     "operation": { "type": "replace", "target": "old", "replacement": "new" }
@@ -78,14 +72,11 @@ For an ordinary text replacement, the shape is:
 }
 ```
 
-Use the provider and operation forms returned by `threadmoth schema` for other
-file types. Keep requests workspace-relative and never smuggle shell commands,
-network work, or an unrelated file operation into the mutation request.
+Older supported protocol versions remain valid where the installed runtime advertises them. Prefer runtime `schema`/`examples` over hard-coding assumptions.
 
 ## Preview, then mutate
 
-When the target, cardinality, effect, or preservation result is not already
-obvious, preview first:
+When the target, cardinality, effect or preservation result is not already obvious, preview first:
 
 ```text
 threadmoth preview --request request.json
@@ -100,37 +91,24 @@ threadmoth explain --plan plan.json
 threadmoth apply-plan --plan plan.json
 ```
 
-Plans are untrusted and staleable. Applying one rechecks hashes, containment,
-exact edits, budgets, candidate guards, and bounded assertions. Never try to
-repair a stale plan by fuzzy relocation; prepare a new plan.
+Plans are untrusted and staleable. Applying one rechecks hashes, containment, exact edits, budgets, candidate guards and bounded assertions. Never repair a stale plan by fuzzy relocation; prepare a new plan.
 
-The default output is JSON. `--summary` is for a compact human view; keep the
-full JSON certificate for agent state, audit, and follow-up decisions. A
-transaction can be previewed with `threadmoth transact --request transaction.json --preview`.
+The default mutation output is JSON. `--summary` is a compact human view; keep the full JSON certificate for agent state, audit and follow-up decisions. Transactions can be previewed with `threadmoth transact --request transaction.json --preview`.
 
-Inspect the preview before mutating. Confirm the outcome, provider, path,
-cardinality, changed ranges, effect-budget usage, preservation facts, and any
-pre-image identity. Do not treat a successful process exit alone as proof that
-the intended bytes landed.
+Inspect the preview before mutating. Confirm outcome, provider, path, cardinality, changed ranges, effect-budget usage, preservation facts and source identity. Do not treat process exit alone as proof that intended bytes landed.
 
 ## Handle outcomes deliberately
 
 - `APPLIED` means the guarded mutation was committed and certified.
 - `NO_CHANGE` means the requested result already held; keep the certificate.
-- `REFUSED` means Threadmoth found ambiguity, stale identity, unsupported input,
-  a path or safety violation, invalid data, or an effect outside the budget.
-- `FAILED` means a runtime or commit failure; preserve the failure evidence and
-  inspect recovery state when the response says recovery is relevant.
+- `REFUSED` means Threadmoth found ambiguity, stale identity, unsupported input, a path/safety violation, invalid data or an effect outside the budget.
+- `FAILED` means a runtime or commit failure; preserve failure evidence and inspect recovery state when relevant.
 
-Exit codes are stable: `0` for applied/no-change, `2` for refusal, and `3` for
-runtime failure. On refusal, read the reason code, candidate context, and
-suggested narrowing. Use `threadmoth explain REASON_CODE` and, where provided,
-`threadmoth suggest --from-refusal CERTIFICATE`. Narrow the request, ask the
-user to disambiguate, or stop. Never silently widen the edit or bypass a
-refusal with a raw write.
+Exit codes are stable: `0` for applied/no-change, `2` for refusal and `3` for runtime failure.
 
-For transaction failures, use the recovery discovery commands rather than
-deleting evidence:
+On refusal, read the reason code, candidate context and deterministic remedies. Use `threadmoth explain REASON_CODE` and, where provided, `threadmoth suggest --from-refusal CERTIFICATE`. Narrow the request, explicitly choose a reported candidate/route, ask the user to disambiguate, or stop. Never silently widen the edit or bypass a refusal with a raw write.
+
+For transaction failures, use recovery discovery rather than deleting evidence:
 
 ```text
 threadmoth recover --list
@@ -138,6 +116,4 @@ threadmoth recover --inspect TRANSACTION_ID
 threadmoth recover --transaction TRANSACTION_ID
 ```
 
-Report the certificate or refusal reason in the task result. If a fallback was
-necessary, state why Threadmoth did not cover the operation and what broader
-tool was used.
+Report the certificate or refusal reason in the task result. If a fallback was necessary, state why the requested Threadmoth capability did not apply and what broader tool was used.
