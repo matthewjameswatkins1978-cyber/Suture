@@ -23,6 +23,7 @@ use crate::provider::text::TextOperation;
 use crate::provider::toml::{TomlOperation, TomlValueWrapper};
 use crate::provider::web::WebOperation;
 use crate::provider::yaml::YamlOperation;
+use crate::target_registry;
 use crate::workspace::Workspace;
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
@@ -130,6 +131,8 @@ pub struct CapabilityManifest {
     pub resource_limits: ResourceLimits,
     pub effect_budget_dimensions: Vec<&'static str>,
     pub reason_codes: Vec<ReasonMetadata>,
+    pub coverage_levels: Vec<&'static str>,
+    pub targets: Vec<Value>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -147,6 +150,9 @@ pub struct Suggestion {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     pub detection_basis: String,
+    pub understanding_level: String,
+    pub preservation_level: String,
+    pub fallback_routes: Vec<String>,
     pub goal: Option<String>,
     pub mode: String,
     pub recommended_operation: Option<String>,
@@ -511,7 +517,7 @@ pub fn provider_metadata() -> Vec<ProviderMetadata> {
             "yaml",
             "yaml-conservative-source-v1",
             vec!["set", "ensure_present", "delete", "ensure_absent"],
-            vec!["top_level_scalar_key"],
+            vec!["yaml_path"],
             "comments for supported scalar forms",
             true,
         ),
@@ -538,6 +544,21 @@ pub fn provider_metadata() -> Vec<ProviderMetadata> {
             vec!["set", "unset", "ensure_present"],
             vec!["key"],
             "comments and unrelated lines",
+            true,
+        ),
+        provider(
+            "ini",
+            "ini-source-v1",
+            vec![
+                "set",
+                "unset",
+                "ensure_present",
+                "ensure_absent",
+                "rename_key",
+                "ensure_section",
+            ],
+            vec!["section_key", "key"],
+            "comments, ordering, whitespace and unrelated lines",
             true,
         ),
         provider(
@@ -920,13 +941,13 @@ pub fn capabilities() -> CapabilityManifest {
     let operations = operation_metadata();
     let reason_codes = reason_metadata();
     let value = json!({
-        "format_version": "1.2",
+        "format_version": "1.3",
         "protocol_versions": SUPPORTED_PROTOCOL_VERSIONS,
         "protocol_version": PROTOCOL_VERSION,
         "threadmoth_version": env!("CARGO_PKG_VERSION"),
         "providers": providers,
         "operations": operations,
-        "selectors": ["literal", "json_pointer", "dotted_key", "top_level_scalar_key", "heading", "bounded_pattern", "syntax_node_text", "syntax_node_kind", "workspace_relative_path"],
+        "selectors": ["literal", "json_pointer", "dotted_key", "yaml_path", "section_key", "heading", "bounded_pattern", "syntax_node_text", "syntax_node_kind", "workspace_relative_path"],
         "preservation_guarantees": ["unrelated_bytes", "utf8", "utf8_bom", "lf", "crlf", "final_newline", "comments_where_supported"],
         "encodings": ["utf8", "utf8_bom"],
         "path_namespaces": ["native", "windows", "wsl", "posix"],
@@ -944,11 +965,13 @@ pub fn capabilities() -> CapabilityManifest {
         "plan_limits": {"max_plan_bytes": MAX_PLAN_BYTES, "max_plan_operations": MAX_PLAN_OPERATIONS, "max_assertions": MAX_ASSERTIONS, "max_assertion_literal_bytes": MAX_ASSERTION_LITERAL_BYTES, "max_candidate_evidence": 4096},
         "resource_limits": {"max_request_bytes": MAX_REQUEST_BYTES, "max_transaction_requests": MAX_TRANSACTION_REQUESTS, "max_diagnostic_bytes": 4096, "max_pattern_bytes": 8192, "max_file_bytes": MAX_FILE_BYTES},
         "effect_budget_dimensions": ["max_files", "max_matches", "max_changed_regions", "max_changed_lines", "max_changed_bytes", "allowed_path_prefixes"],
-        "reason_codes": reason_codes
+        "reason_codes": reason_codes,
+        "coverage_levels": ["structured", "syntax", "region", "exact", "opaque"],
+        "target_registry": target_registry::registry()
     });
     let capability_set_id = digest_without_id(&value);
     CapabilityManifest {
-        format_version: "1.2",
+        format_version: "1.3",
         protocol_versions: SUPPORTED_PROTOCOL_VERSIONS.to_vec(),
         protocol_version: PROTOCOL_VERSION,
         threadmoth_version: env!("CARGO_PKG_VERSION"),
@@ -959,7 +982,8 @@ pub fn capabilities() -> CapabilityManifest {
             "literal",
             "json_pointer",
             "dotted_key",
-            "top_level_scalar_key",
+            "yaml_path",
+            "section_key",
             "heading",
             "bounded_pattern",
             "syntax_node_text",
@@ -1032,6 +1056,11 @@ pub fn capabilities() -> CapabilityManifest {
             "allowed_path_prefixes",
         ],
         reason_codes: reason_metadata(),
+        coverage_levels: vec!["structured", "syntax", "region", "exact", "opaque"],
+        targets: target_registry::registry()
+            .iter()
+            .map(|target| serde_json::to_value(target).expect("target registry serializes"))
+            .collect(),
     }
 }
 
@@ -1094,8 +1123,24 @@ pub fn capability_view(selector: Option<&str>) -> Value {
 
 pub fn capabilities_for(path: &str, bytes: Option<&[u8]>) -> Value {
     let mut value = serde_json::to_value(capabilities()).expect("capabilities serialize");
-    let (provider, basis, candidates) = detect_provider(path, bytes);
-    value["target"] = json!({"path": path, "provider": provider, "detection_basis": basis, "candidates": candidates});
+    let detection = target_registry::detect(path, bytes);
+    let provider = detection.provider.as_deref().unwrap_or_else(|| {
+        if detection.confidence_class == "ambiguous" {
+            "ambiguous"
+        } else {
+            "opaque"
+        }
+    });
+    value["target"] = json!({
+        "path": path,
+        "provider": provider,
+        "detection_basis": detection.basis,
+        "candidates": detection.alternatives,
+        "detection": detection.clone(),
+        "understanding_level": detection.understanding_level,
+        "preservation_level": detection.preservation_level,
+        "fallback_routes": detection.fallback_routes
+    });
     if provider != "ambiguous" {
         value["providers"] = value["providers"]
             .as_array()
@@ -1119,6 +1164,7 @@ pub fn inspect(workspace: &Workspace, path: &str) -> Result<Value, String> {
     let bytes = workspace
         .read_file(&resolved)
         .map_err(|error| error.to_string())?;
+    let detection = target_registry::detect(path, Some(&bytes));
     let newline = if bytes.windows(2).any(|window| window == b"\r\n") {
         "crlf"
     } else if bytes.contains(&b'\n') {
@@ -1126,6 +1172,7 @@ pub fn inspect(workspace: &Workspace, path: &str) -> Result<Value, String> {
     } else {
         "none"
     };
+    let detection_value = serde_json::to_value(&detection).expect("detection serializes");
     Ok(json!({
         "protocol_version": PROTOCOL_VERSION,
         "file_path": normalized,
@@ -1134,6 +1181,10 @@ pub fn inspect(workspace: &Workspace, path: &str) -> Result<Value, String> {
         "encoding": if bytes.starts_with(&[0xef, 0xbb, 0xbf]) { "utf8_bom" } else { "utf8" },
         "newline_profile": newline,
         "final_newline": bytes.ends_with(b"\n")
+        ,"detection": detection_value
+        ,"understanding_level": detection.understanding_level
+        ,"preservation_level": detection.preservation_level
+        ,"fallback_routes": detection.fallback_routes
     }))
 }
 
@@ -1505,72 +1556,15 @@ pub fn reason(code: &str) -> Option<ReasonMetadata> {
 }
 
 pub fn detect_provider(path: &str, bytes: Option<&[u8]>) -> (String, String, Vec<String>) {
-    if let Some(language) = syntax::suggest_extension(path) {
-        let family = syntax::lookup(language).map(|spec| spec.family);
-        let provider = match family {
-            Some(LanguageFamily::Code) => "code",
-            Some(LanguageFamily::Web) => "web",
-            None => "text",
-        };
-        return (
-            provider.into(),
-            format!("registry extension for {language}"),
-            Vec::new(),
-        );
-    }
-    let lower = path.to_ascii_lowercase();
-    let file_name = std::path::Path::new(&lower)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("");
-    if file_name == ".env" || file_name.starts_with(".env.") {
-        return (
-            "dotenv".into(),
-            "recognized .env filename family".into(),
-            Vec::new(),
-        );
-    }
-    if matches!(file_name, "dockerfile" | "makefile" | "gnumakefile") {
-        return (
-            "text".into(),
-            "recognized deterministic build filename".into(),
-            Vec::new(),
-        );
-    }
-    let extension = std::path::Path::new(&lower)
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("");
-    let known = match extension {
-        "json" => Some(("json", "file extension .json")),
-        "jsonc" => Some(("jsonc", "file extension .jsonc")),
-        "toml" => Some(("toml", "file extension .toml")),
-        "yaml" | "yml" => Some(("yaml", "file extension .yaml/.yml")),
-        "md" | "markdown" => Some(("markdown", "file extension .md/.markdown")),
-        "env" => Some(("dotenv", "file extension .env")),
-        "js" | "jsx" | "ts" | "tsx" | "py" | "rs" | "go" => {
-            Some(("code", "recognized code-file extension"))
+    let detection = target_registry::detect(path, bytes);
+    let provider = detection.provider.clone().unwrap_or_else(|| {
+        if detection.confidence_class == "ambiguous" {
+            "ambiguous".into()
+        } else {
+            "opaque".into()
         }
-        _ => None,
-    };
-    if let Some((provider, basis)) = known {
-        return (provider.into(), basis.into(), Vec::new());
-    }
-    if let Some(content) = bytes {
-        let trimmed = String::from_utf8_lossy(content).trim_start().to_string();
-        if trimmed.starts_with('{') || trimmed.starts_with('[') {
-            return (
-                "ambiguous".into(),
-                "content resembles structured data without a known extension".into(),
-                vec!["json".into(), "jsonc".into(), "yaml".into()],
-            );
-        }
-    }
-    (
-        "text".into(),
-        "no more-specific provider was established".into(),
-        Vec::new(),
-    )
+    });
+    (provider, detection.basis, detection.alternatives)
 }
 
 pub fn suggest(
@@ -1580,12 +1574,21 @@ pub fn suggest(
     mode: &str,
     bytes: Option<&[u8]>,
 ) -> Suggestion {
-    let (detected, basis, candidates) = detect_provider(path, bytes);
+    let detection = target_registry::detect(path, bytes);
+    let detected = detection.provider.clone().unwrap_or_else(|| {
+        if detection.confidence_class == "ambiguous" {
+            "ambiguous".into()
+        } else {
+            "opaque".into()
+        }
+    });
+    let basis = detection.basis.clone();
+    let candidates = detection.alternatives.clone();
     // An ambiguous content-based detection is evidence, not permission to
     // choose the first provider. Keep the request template empty until the
     // caller explicitly selects a provider through the path/operation it
     // submits.
-    let selected = if candidates.is_empty() {
+    let selected = if candidates.is_empty() && detected != "opaque" {
         Some(detected.as_str())
     } else {
         None
@@ -1641,8 +1644,11 @@ pub fn suggest(
     }
     Suggestion {
         provider: detected.clone(),
-        language: syntax::suggest_extension(path).map(str::to_owned),
+        language: syntax::lookup(&detection.target_kind).map(|spec| spec.id.to_owned()),
         detection_basis: basis,
+        understanding_level: format!("{:?}", detection.understanding_level).to_ascii_lowercase(),
+        preservation_level: format!("{:?}", detection.preservation_level).to_ascii_lowercase(),
+        fallback_routes: detection.fallback_routes.clone(),
         goal: goal.map(str::to_owned),
         mode: mode.into(),
         recommended_operation: template
@@ -1712,6 +1718,10 @@ fn template_for(
                 key: at.unwrap_or("KEY").into(),
                 value: "VALUE".into(),
             }),
+            "ini" => OperationPayload::Ini(crate::provider::ini::IniOperation::EnsurePresent {
+                path: at.unwrap_or("SECTION.KEY").into(),
+                value: "VALUE".into(),
+            }),
             _ => OperationPayload::Text(TextOperation::EnsurePresent {
                 content: "CONTENT_TO_ENSURE".into(),
             }),
@@ -1747,6 +1757,15 @@ fn template_for(
             "dotenv" => OperationPayload::Dotenv(DotenvOperation::Unset {
                 key: at.unwrap_or("KEY").into(),
             }),
+            "ini" => OperationPayload::Ini(if goal == "remove-item" {
+                crate::provider::ini::IniOperation::Unset {
+                    path: at.unwrap_or("SECTION.KEY").into(),
+                }
+            } else {
+                crate::provider::ini::IniOperation::EnsureAbsent {
+                    path: at.unwrap_or("SECTION.KEY").into(),
+                }
+            }),
             _ => OperationPayload::Text(TextOperation::EnsureAbsent {
                 target: "EXACT_TARGET".into(),
             }),
@@ -1759,6 +1778,10 @@ fn template_for(
             "toml" => OperationPayload::Toml(TomlOperation::RenameKey {
                 path: at.unwrap_or("old.key").into(),
                 new_key: "new_key".into(),
+            }),
+            "ini" => OperationPayload::Ini(crate::provider::ini::IniOperation::RenameKey {
+                path: at.unwrap_or("SECTION.OLD_KEY").into(),
+                new_key: "NEW_KEY".into(),
             }),
             "code" => OperationPayload::Code(CodeOperation::ReplaceNode {
                 language: language_for_path(path),
@@ -1789,6 +1812,10 @@ fn template_for(
             "yaml" => OperationPayload::Yaml(YamlOperation::Set {
                 path: at.unwrap_or("key").into(),
                 value: json!("NEW_VALUE"),
+            }),
+            "ini" => OperationPayload::Ini(crate::provider::ini::IniOperation::Set {
+                path: at.unwrap_or("SECTION.KEY").into(),
+                value: "NEW_VALUE".into(),
             }),
             "code" => OperationPayload::Code(CodeOperation::ReplaceNode {
                 language: language_for_path(path),

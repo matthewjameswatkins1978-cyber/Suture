@@ -176,6 +176,6 @@ fn provider_detection_handles_common_special_filenames_without_guessing() {
     assert_eq!(detect_provider("types.d.ts", None).0, "code");
     assert_eq!(
         detect_provider("deploy", Some(b"#!/bin/sh\necho ok\n")).0,
-        "text"
+        "code"
     );
 }

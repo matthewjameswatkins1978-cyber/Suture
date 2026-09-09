@@ -5,7 +5,7 @@ use threadmoth::protocol::{Certificate, Request, PROTOCOL_VERSION};
 fn exported_protocol_schema_has_a_golden_digest() {
     let value = serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "Threadmoth 1.8.1 Protocol Schemas",
+        "title": "Threadmoth 1.9.0 Protocol Schemas",
         "protocol_version": PROTOCOL_VERSION,
         "request": schema_for!(Request),
         "certificate": schema_for!(Certificate)
@@ -14,6 +14,6 @@ fn exported_protocol_schema_has_a_golden_digest() {
     let digest = threadmoth::engine::compute_sha256(format!("{rendered}\n").as_bytes());
     assert_eq!(
         digest,
-        "0b2ef81c450a54ff0a0e5a7f4ec3b878b668550cf409dc47ab10328c7cd868a6"
+        "48fcf141df836fa1c8b0bf716862b86cf7d0c79ec1dc007b26ccb99fa214ace9"
     );
 }

@@ -2,6 +2,7 @@
 
 pub mod code;
 pub mod dotenv;
+pub mod ini;
 pub mod json;
 pub mod jsonc;
 pub mod markdown;

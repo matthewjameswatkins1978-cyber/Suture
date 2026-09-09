@@ -174,8 +174,20 @@ fn run_set_value(args: SetValueArgs) {
                 std::process::exit(2);
             }
         },
+        "ini" => match value {
+            serde_json::Value::String(value) => threadmoth::protocol::OperationPayload::Ini(
+                threadmoth::provider::ini::IniOperation::Set {
+                    path: args.path,
+                    value,
+                },
+            ),
+            _ => {
+                eprintln!("set-value refused: INI values must be JSON strings");
+                std::process::exit(2);
+            }
+        },
         _ => {
-            eprintln!("set-value refused: use a .json, .jsonc, .toml, .yaml, or .yml file");
+            eprintln!("set-value refused: use a .json, .jsonc, .toml, .yaml, .yml, or .ini file");
             std::process::exit(2);
         }
     };
@@ -1134,14 +1146,18 @@ fn run_doctor(args: DoctorArgs) {
                 "self_update_eligible": installation.is_standalone(),
                 "path_configured": path_status,
                 "shell": shell,
+                "build": threadmoth::build_info::current(),
             })
         );
         return;
     }
     println!(
-        "threadmoth doctor\nversion: {THREADMOTH_VERSION}\nos: {}\narch: {}\nworkspace: {workspace}\nprotocol: {PROTOCOL_VERSION}\nproviders: {providers}\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available\ninstallation: {}\nexecutable: {executable}\nself-update: {self_update}\nshell: {shell}\npath: {}\ncompletion: available (threadmoth completions {shell})\nmanpage: available (threadmoth manpage)",
+        "threadmoth doctor\nversion: {THREADMOTH_VERSION}\nos: {}\narch: {}\nworkspace: {workspace}\nprotocol: {PROTOCOL_VERSION}\nproviders: {providers}\nbuild: {} / {} / {}\ntransport: stdin/stdout mcp/stdio\ncommit: staged atomic replacement; recovery journal available\ninstallation: {}\nexecutable: {executable}\nself-update: {self_update}\nshell: {shell}\npath: {}\ncompletion: available (threadmoth completions {shell})\nmanpage: available (threadmoth manpage)",
         env::consts::OS,
         env::consts::ARCH,
+        threadmoth::build_info::current().build_flavor,
+        threadmoth::build_info::current().cpu_baseline,
+        threadmoth::build_info::current().optimization_profile,
         installation.label(),
         if path_status {
             "configured"

@@ -17,6 +17,7 @@ use crate::protocol::{
 };
 use crate::provider::code::{self, CodeError, CodeOperation};
 use crate::provider::dotenv::{self, DotenvError};
+use crate::provider::ini::{self, IniError};
 use crate::provider::json::{JsonProvider, JsonProviderError};
 use crate::provider::jsonc::JsoncProvider;
 use crate::provider::markdown::{self, MarkdownError};
@@ -2435,6 +2436,12 @@ fn plan_edits_unchecked(
                 }
             })
         }
+        OperationPayload::Ini(o) => ini::plan(original, o, &request.cardinality).map_err(|e| {
+            let detail = e.to_string();
+            match e {
+                IniError::Refused(reason) => (reason, detail),
+            }
+        }),
         OperationPayload::Patch(o) => {
             patch::plan_with_path(original, o, &request.cardinality, file_path).map_err(|e| {
                 let detail = e.to_string();
@@ -2543,6 +2550,14 @@ fn validate_candidate(
         OperationPayload::Dotenv(_) => Ok(StructuralValidation::Valid {
             format: "dotenv_lines".into(),
         }),
+        OperationPayload::Ini(_) => {
+            ini::validate(candidate).map_err(|error| FailureReason::ProviderError {
+                details: error.to_string(),
+            })?;
+            Ok(StructuralValidation::Valid {
+                format: "ini_source".into(),
+            })
+        }
         OperationPayload::Patch(_) => Ok(StructuralValidation::NotApplicable),
         OperationPayload::Web(operation) => {
             let language = web_language(operation);
@@ -3004,6 +3019,7 @@ fn provider_name(op: &OperationPayload) -> &'static str {
         OperationPayload::File(_) => "filesystem",
         OperationPayload::Code(_) => "code",
         OperationPayload::Dotenv(_) => "dotenv",
+        OperationPayload::Ini(_) => "ini",
         OperationPayload::Patch(_) => "patch",
         OperationPayload::Web(_) => "web",
         OperationPayload::DesiredState(_) => "desired_state",
@@ -3021,6 +3037,7 @@ fn provider_version(op: &OperationPayload) -> &'static str {
         OperationPayload::File(_) => "lifecycle-checked-v1",
         OperationPayload::Code(_) => "tree-sitter-node-v1",
         OperationPayload::Dotenv(_) => "dotenv-lines-v1",
+        OperationPayload::Ini(_) => "ini-source-v1",
         OperationPayload::Patch(_) => "unified-diff-strict-v1",
         OperationPayload::Web(_) => "tree-sitter-web-node-v1",
         OperationPayload::DesiredState(_) => "strict-derived-bounded-edits-v1",

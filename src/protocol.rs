@@ -3,6 +3,7 @@ use crate::path::PathNamespace;
 use crate::pattern::PatternOperation;
 use crate::provider::code::CodeOperation;
 use crate::provider::dotenv::DotenvOperation;
+use crate::provider::ini::IniOperation;
 use crate::provider::json::JsonOperation;
 use crate::provider::markdown::MarkdownOperation;
 use crate::provider::patch::PatchOperation;
@@ -53,6 +54,7 @@ pub enum OperationPayload {
     File(FileOperation),
     Code(CodeOperation),
     Dotenv(DotenvOperation),
+    Ini(IniOperation),
     Patch(PatchOperation),
     Web(WebOperation),
     DesiredState(DesiredStateOperation),

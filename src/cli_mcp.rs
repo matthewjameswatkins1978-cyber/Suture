@@ -127,7 +127,16 @@ fn set_value_operation(file: &str, path: &str, value: Value) -> Result<Operation
                 },
             ))
         }
-        _ => Err("set-value supports .json, .jsonc, .toml, .yaml, and .yml files".into()),
+        "ini" => match value {
+            Value::String(value) => Ok(OperationPayload::Ini(
+                threadmoth::provider::ini::IniOperation::Set {
+                    path: path.into(),
+                    value,
+                },
+            )),
+            _ => Err("INI values must be JSON strings".into()),
+        },
+        _ => Err("set-value supports .json, .jsonc, .toml, .yaml, .yml, and .ini files".into()),
     }
 }
 

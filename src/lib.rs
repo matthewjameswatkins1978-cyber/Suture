@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod benchmark;
+pub mod build_info;
 pub mod capabilities;
 pub mod diff_planner;
 pub mod engine;
@@ -13,6 +14,7 @@ mod presentation;
 pub mod protocol;
 pub mod provider;
 pub mod recovery;
+pub mod target_registry;
 pub mod torture;
 pub mod updater;
 pub mod workspace;
