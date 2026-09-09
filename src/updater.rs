@@ -10,7 +10,7 @@ use std::{path::Path, process::Command};
 
 const OWNER: &str = "matthewjameswatkins1978-cyber";
 const REPOSITORY: &str = "Threadmoth";
-const CHECKSUM_ASSET: &str = "release-manifest.json";
+const RELEASE_MANIFEST_ASSET: &str = "release-manifest.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Platform {
@@ -304,12 +304,16 @@ pub fn discover(requested: Option<&str>) -> Result<UpdateInfo, UpdateError> {
         )
         .with_platform(&platform)
     })?;
-    if exact_asset(&release, CHECKSUM_ASSET).is_none() {
+    let checksum_asset = checksum_asset_name(&platform);
+    if exact_asset(&release, RELEASE_MANIFEST_ASSET).is_none()
+        || exact_asset(&release, &checksum_asset).is_none()
+    {
         return Err(UpdateError::new(
             UpdateErrorKind::IntegrityFailed,
             format!(
-                "release {} does not contain exactly one {CHECKSUM_ASSET} asset",
-                release.version()
+                "release {} does not contain exactly one release manifest and {} checksum asset",
+                release.version(),
+                checksum_asset
             ),
         )
         .with_platform(&platform));
@@ -353,7 +357,7 @@ pub fn install(info: &UpdateInfo) -> Result<UpdateReport, UpdateError> {
                 selected
             }
         })
-        .checksum_from_asset(CHECKSUM_ASSET)
+        .checksum_from_asset(checksum_asset_name(&info.platform))
         .verify_release_digest(true)
         .check_install_path_writable(true)
         .unattended();
@@ -472,10 +476,19 @@ fn verify_binary(path: &Path, expected_version: &str) -> self_update::Result<()>
 
 fn verification_label(github_digest: bool) -> String {
     if github_digest {
-        "SHA-256 manifest + GitHub digest".to_string()
+        "SHA-256 checksum + GitHub digest (release manifest present)".to_string()
     } else {
-        "SHA-256 manifest (GitHub digest unavailable)".to_string()
+        "SHA-256 checksum (GitHub digest unavailable; release manifest present)".to_string()
     }
+}
+
+fn checksum_asset_name(platform: &Platform) -> String {
+    let archive_stem = platform
+        .archive
+        .strip_suffix(".tar.gz")
+        .or_else(|| platform.archive.strip_suffix(".zip"))
+        .unwrap_or(platform.archive);
+    format!("{archive_stem}.sha256")
 }
 
 #[cfg(test)]
@@ -533,5 +546,24 @@ mod tests {
             "threadmoth-windows-x86_64.zip"
         );
         assert!(exact_asset(&release, "missing.zip").is_none());
+    }
+
+    #[test]
+    fn checksum_asset_matches_the_published_archive_name() {
+        let windows = Platform {
+            name: "windows-x86_64",
+            archive: "threadmoth-windows-x86_64.zip",
+            executable: "threadmoth.exe",
+        };
+        let unix = Platform {
+            name: "linux-x86_64",
+            archive: "threadmoth-linux-x86_64.tar.gz",
+            executable: "threadmoth",
+        };
+        assert_eq!(
+            checksum_asset_name(&windows),
+            "threadmoth-windows-x86_64.sha256"
+        );
+        assert_eq!(checksum_asset_name(&unix), "threadmoth-linux-x86_64.sha256");
     }
 }
